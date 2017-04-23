@@ -14,6 +14,7 @@ import pymysql
 from sys import argv, exit
 from socket import gethostname
 from urllib.parse import unquote
+from collections import OrderedDict
 from zlib import crc32
 from multiprocessing import Pool
 
@@ -40,7 +41,7 @@ creat_table = "CREATE TABLE IF NOT EXISTS {} (\
                 uri varchar(255) NOT NULL DEFAULT '' COMMENT '$uri,已做uridecode',\
                 uri_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面uri字段计算crc32',\
                 args varchar(255) NOT NULL DEFAULT '' COMMENT '$args,已做uridecode',\
-                args_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面args字段计算crc32',\
+                args_abs_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面args字段进行抽象化然后计算crc32',\
                 time_local timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',\
                 response_code smallint NOT NULL DEFAULT '0',\
                 bytes int NOT NULL DEFAULT '0',\
@@ -51,7 +52,7 @@ creat_table = "CREATE TABLE IF NOT EXISTS {} (\
                     COMMENT '0(正则根本无法匹配该行日志或日志中$request内容异常) 1(uri和args均正常) 2(uri不正常) 3(参数不正常:通过大小判断,200b) 4(uri和参数都不正常))',\
                 KEY time_local (time_local),\
                 KEY uri_crc32 (uri_crc32),\
-                KEY args_crc32 (args_crc32)\
+                KEY args_abs_crc32 (args_abs_crc32)\
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
 ##### 自定义部分结束 #####
 
@@ -120,6 +121,23 @@ def process_line(line_str):
             else:
                 args = unquote(uri_args[1])
 
+                # 进一步处理args，将args中的参数部分做相应转换(抽象化)，规则：参数值不包含=的，转换为?；包含=的，若值由[a-zA-Z\-_]组成，则保留，其他情况值转为?
+                args_abs = ''
+                try:
+                    arg_dict = OrderedDict((tmp.split('=') for tmp in args.split('&')))
+                    for k, v in arg_dict.items():
+                        if not re.match(r'[a-zA-Z\-_]+$', v):
+                            '''value的值为全字母时，不进行转换'''
+                            arg_dict[k] = '?'
+                    for k, v in arg_dict.items():
+                        if args_abs == '':
+                            args_abs += '{}={}'.format(k, v)
+                        else:
+                            args_abs += '&{}={}'.format(k, v)
+                except ValueError as err:
+                    '''参数中没有= 或者 即没&也没= 会抛出ValueError'''
+                    args_abs = '?'
+
             # 判断uri及args是否正常
             # if_normal: 1(正常) 2(uri不正常,通过大小暂定200b) 3(args不正常,同过大小暂定200b;or '?' in args) 4(uri和args都不正常)
             if len(uri) > 200:
@@ -133,14 +151,14 @@ def process_line(line_str):
 
             # 对库里的uri和args字段进行crc32校验
             uri_crc32 = crc32(uri.encode())
-            args_crc32 = crc32(args.encode())
+            args_abs_crc32 = 0 if args == '' else crc32(args_abs.encode())
         else:
             '''$request不能被正确的被空格分为三段时，正常是可以的'''
             print('$request abnormal: {}'.format(line_str))
             uri = request
             uri_crc32 = 0
             args = ''
-            args_crc32 = 0
+            args_abs_crc32 = 0
             if_normal = 0
 
         # 状态码,字节数,响应时间
@@ -166,7 +184,7 @@ def process_line(line_str):
             user_ip = ips[0].rstrip(',')
             cdn_ip = ips[-1]
 
-        return server, uri, uri_crc32, args, args_crc32, new_time, response_code, size, request_time, user_ip, cdn_ip, if_normal
+        return server, uri, uri_crc32, args, args_abs_crc32, new_time, response_code, size, request_time, user_ip, cdn_ip, if_normal
 
 
 def insert_data(line_data, cursor, results, limit, t_name, l_name):
@@ -178,7 +196,6 @@ def insert_data(line_data, cursor, results, limit, t_name, l_name):
     l_name:日志文件名
     """
     line_result = process_line(line_data)
-
     results.append(line_result)
     # print('len(result):{}'.format(len(result)))    #debug
     if len(results) == limit:
@@ -189,7 +206,7 @@ def insert_data(line_data, cursor, results, limit, t_name, l_name):
 
 def insert_correct(cursor, results, t_name, l_name):
     """在插入数据过程中处理异常"""
-    insert_sql = 'insert into {} (server,uri,uri_crc32,args,args_crc32,time_local,response_code,bytes,request_time,user_ip,cdn_ip,if_normal) ' \
+    insert_sql = 'insert into {} (server,uri,uri_crc32,args,args_abs_crc32,time_local,response_code,bytes,request_time,user_ip,cdn_ip,if_normal) ' \
                  'values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'.format(t_name)
     try:
         cursor.executemany(insert_sql, results)
@@ -212,8 +229,7 @@ def get_prev_num(t_name, l_name):
             con_cur.execute('select max(id) from {}'.format(t_name))
             max_id = con_cur.fetchone()[0]
             con_cur.execute(
-                'select count(*) from {} where id>={} and id<={} and server="{}"'.format(t_name, min_id, max_id,
-                                                                                         server))
+                'select count(*) from {} where id>={} and id<={} and server="{}"'.format(t_name, min_id, max_id, server))
             prev_num = con_cur.fetchone()[0]
         else:
             prev_num = 0
@@ -250,7 +266,7 @@ def main_loop(log_name):
     # 当前日志文件总行数
     num = int(subprocess.run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=subprocess.PIPE,
                              universal_newlines=True).stdout.split()[0])
-    print('num: {}'.format(num))  # debug
+    # print('num: {}'.format(num))  # debug
     # 上一次处理到的行数
     prev_num = get_prev_num(table_name, log_name)
     if prev_num is not None:
