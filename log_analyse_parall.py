@@ -25,12 +25,12 @@ log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?)\] "(?P<request>.*?
 log_pattern_obj = re.compile(log_pattern)
 # 日志目录
 log_dir = '/zz_data/nginx_log/'
-# 要处理的站点（可随需要想list中添加）
+# 要处理的站点（可随需要向list中添加）
 todo = ['www', 'user']
 # MySQL相关设置
 mysql_host = 'x.x.x.x'
-mysql_user = 'xxxx'
-mysql_passwd = 'xxxx'
+mysql_user = 'xxx'
+mysql_passwd = 'xxx'
 mysql_port = 3307
 mysql_database = 'log_analyse'
 # 表结构
@@ -273,6 +273,7 @@ if __name__ == "__main__":
         os.chdir(log_dir)
         logs_list = os.listdir(log_dir)
         logs_list = [i for i in logs_list if 'access' in i and os.path.isfile(i) and i.split('.access')[0] in todo]
-        # 并行
-        with Pool(len(logs_list)) as p:
-            p.map(main_loop, logs_list)
+        if len(logs_list) > 0:
+            # 并行
+            with Pool(len(logs_list)) as p:
+                p.map(main_loop, logs_list)
