@@ -14,12 +14,24 @@ import pymysql
 from sys import argv, exit
 from socket import gethostname
 from urllib.parse import unquote
-from collections import OrderedDict
 from zlib import crc32
 from multiprocessing import Pool
+from functools import wraps
 
 
-##### 自定义部分 #####
+def timer(function):
+    @wraps(function)
+    def inner_func(*args, **kwargs):
+        t0 = time.time()
+        result_ = function(*args, **kwargs)
+        t1 = time.time()
+        print("Total time running %s: %s seconds" % (function.__name__, str(t1 - t0)))
+        return result_
+
+    return inner_func
+
+
+# ---------- 自定义部分 ----------#
 # 定义日志格式，利用非贪婪匹配和分组匹配，需要严格参照日志定义中的分隔符和引号
 log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?)\] "(?P<request>.*?)"' \
               r' (?P<status>.*?) (?P<body_bytes_sent>.*?) (?P<request_time>.*?)' \
@@ -37,7 +49,7 @@ mysql_passwd = 'xxxx'
 mysql_port = 3307
 mysql_database = 'log_analyse'
 # 表结构
-creat_table = "CREATE TABLE IF NOT EXISTS {} (\
+table_format = "CREATE TABLE IF NOT EXISTS {} (\
                 id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,\
                 server char(11) NOT NULL DEFAULT '',\
                 uri_abs varchar(200) NOT NULL DEFAULT '' COMMENT '对$uri做uridecode,然后做抽象化处理',\
@@ -57,8 +69,10 @@ creat_table = "CREATE TABLE IF NOT EXISTS {} (\
                 KEY time_local (time_local),\
                 KEY uri_abs_crc32 (uri_abs_crc32),\
                 KEY args_abs_crc32 (args_abs_crc32)\
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 row_format=compressed"
-##### 自定义部分结束 #####
+              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 row_format=compressed"
+# 每处理limit条日志,执行一次数据库插入操作(多行插入,减少和数据库间的交互)
+limit = 1000
+# ---------- 自定义部分结束 ----------#
 
 
 log_pattern_obj = re.compile(log_pattern)
@@ -73,6 +87,7 @@ today_start = time.strftime('%Y-%m-%d', time.localtime()) + ' 00:00:00'
 warnings.filterwarnings('error', category=pymysql.err.Warning)
 
 
+@timer
 def my_connect():
     """链接数据库"""
     global connection, con_cur
@@ -85,13 +100,18 @@ def my_connect():
     con_cur = connection.cursor()
 
 
+@timer
 def create_table(t_name):
     """创建各站点对应的表"""
     my_connect()
     try:
-        con_cur.execute(creat_table.format(t_name))
+        con_cur.execute(table_format.format(t_name))
     except pymysql.err.Warning:
         pass
+    except pymysql.err.MySQLError as err:
+        print('\n{}    Error: {}'.format(t_name, err))
+        connection.close()
+        exit(10)
 
 
 def process_line(line_str):
@@ -103,16 +123,13 @@ def process_line(line_str):
     if not processed:
         '''如果正则根本就无法匹配该行记录时'''
         print("Can't process this line: {}".format(line_str))
-        return server, '', 0, '', 0, '', '', '', '', '', ''
+        return server, '', 0, '', 0, '', '', '', '', '', '', '', '', ''
     else:
         # remote_addr (客户若不经过代理，则可认为用户的真实ip)
         remote_addr = processed.group('remote_addr')
 
         # time_local
-        time_local = processed.group('time_local')
-        # 转换时间为mysql date类型
-        ori_time = time.strptime(time_local.split()[0], '%d/%b/%Y:%H:%M:%S')
-        new_time = time.strftime('%Y-%m-%d %H:%M:%S', ori_time)
+        time_local = ngx_time_local_to_mysql_timestamp(processed.group('time_local').split()[0])
 
         # 处理uri和args
         request = processed.group('request')
@@ -163,76 +180,36 @@ def process_line(line_str):
             user_ip = ips[0].rstrip(',')
             cdn_ip = ips[-1]
 
-        return (server, uri_abs, uri_abs_crc32, args_abs, args_abs_crc32, new_time, response_code, bytes_sent,
+        return (server, uri_abs, uri_abs_crc32, args_abs, args_abs_crc32, time_local, response_code, bytes_sent,
                 request_time, user_ip, cdn_ip, request_method, uri, args)
 
 
+def ngx_time_local_to_mysql_timestamp(ngx_time_local):
+    month_dict={'Jan':'01','Feb':'02','Mar':'03','Apr':'04','May':'05','Jun':'06',
+                'Jul':'07','Aug':'08','Sep':'09','Oct':'10','Nov':'11','Dec':'12'}
+    # tmp中元素顺序: '%d/%b/%Y:%H:%M:%S'
+    tmp=re.split('/|:',ngx_time_local)
+    # 返回格式: '%Y-%m-%d %H:%M:%S'
+    return '{}-{}-{} {}:{}:{}'.format(tmp[2], month_dict[tmp[1]], tmp[0], tmp[3], tmp[4], tmp[5])
+
+
 def text_abstract(text, what):
-    """进一步处理uri和args，将其做抽象化，方便对其进行归类
-    如uri: /article/10.html 抽象为 /article/?.html
-    如args: s=你好&type=0 抽象为 s=?&type=?
-    规则：待处理部分由[a-zA-Z\-_]组成的，则保留，其他情况值转为'?'
     """
-    tmp_abs = ''
+    对uri和args进行抽象化,利于分类
+    抽象规则:
+        uri中所有的数字抽象为'?'
+        args中所有参数值抽象为'?'
+    text: 待处理的内容
+    what: uri 或 args
+    """
     if what == 'uri':
-        uri_list = [tmp for tmp in text.split('/') if tmp != '']
-        if len(uri_list) == 0:
-            '''uri为"/"的情况'''
-            tmp_abs = '/'
-        else:
-            for i in range(len(uri_list)):
-                if not re.match(r'[a-zA-Z\-_]+?(\..*)?$', uri_list[i]):
-                    '''uri不符合规则时，进行转换'''
-                    if '.' in uri_list[i]:
-                        if not re.match(r'[a-zA-Z\-_]+$', uri_list[i].split('.')[0]):
-                            uri_list[i] = '?.' + uri_list[i].split('.')[1]
-                    else:
-                        uri_list[i] = '?'
-            for v in uri_list:
-                tmp_abs += '/{}'.format(v)
-            if text.endswith('/'):
-                '''如果原uri后面有"/"，要保留'''
-                tmp_abs += '/'
+        return re.sub('[0-9]+','?',text)
     elif what == 'args':
-            if text == '':
-                tmp_abs = ''
-            else:
-                try:
-                    tmp_dict = OrderedDict((tmp.split('=') for tmp in text.split('&')))
-                    for k, v in tmp_dict.items():
-                        if not re.match(r'[a-zA-Z\-_]+$', v):
-                            '''除了value值为全字母的情况，都进行转换'''
-                            tmp_dict[k] = '?'
-                    for k, v in tmp_dict.items():
-                        if tmp_abs == '':
-                            tmp_abs += '{}={}'.format(k, v)
-                        else:
-                            tmp_abs += '&{}={}'.format(k, v)
-                except ValueError:
-                    '''参数中没有= 或者 即没&也没= 会抛出ValueError'''
-                    tmp_abs = '?'
-    return tmp_abs
-
-
-def insert_data(line_data, cursor, results, limit, t_name, l_name):
-    """
-    记录处理之后的数据,累积limit条执行一次插入
-    line_data:每行处理之前的字符串数据;
-    limit:每limit行执行一次数据插入;
-    t_name:对应的表名;
-    l_name:日志文件名
-    """
-    line_result = process_line(line_data)
-    results.append(line_result)
-    # print('len(result):{}'.format(len(result)))    #debug
-    if len(results) == limit:
-        insert_correct(cursor, results, t_name, l_name)
-        results.clear()
-        print('{} {} 处理至 {}'.format(time.strftime('%H:%M:%S', time.localtime()), l_name, line_result[5]))
+        return re.sub('=[^&=]+','=?',text)
 
 
 def insert_correct(cursor, results, t_name, l_name):
-    """在插入数据过程中处理异常"""
+    """多行插入,并且处理在插入过程中的异常"""
     insert_sql = 'insert into {} (server,uri_abs,uri_abs_crc32,args_abs,args_abs_crc32,time_local,response_code,' \
                  'bytes_sent,request_time,user_ip,cdn_ip,request_method,uri,args) ' \
                  'values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'.format(t_name)
@@ -247,6 +224,7 @@ def insert_correct(cursor, results, t_name, l_name):
         exit(10)
 
 
+@timer
 def get_prev_num(t_name, l_name):
     """取得今天已入库的行数 t_name:表名 l_name:日志文件名"""
     try:
@@ -257,7 +235,8 @@ def get_prev_num(t_name, l_name):
             con_cur.execute('select max(id) from {}'.format(t_name))
             max_id = con_cur.fetchone()[0]
             con_cur.execute(
-                'select count(*) from {} where id>={} and id<={} and server="{}"'.format(t_name, min_id, max_id, server))
+                'select count(*) from {} where id>={} and id<={} and server="{}"'.format(t_name, min_id, max_id,
+                                                                                         server))
             prev_num = con_cur.fetchone()[0]
         else:
             prev_num = 0
@@ -268,6 +247,7 @@ def get_prev_num(t_name, l_name):
         return
 
 
+@timer
 def del_old_data(t_name, l_name, n=3):
     """删除n天前的数据,n默认为3"""
     # n天前的日期间
@@ -284,37 +264,44 @@ def del_old_data(t_name, l_name, n=3):
         print('未能删除表3天前的数据...\n')
 
 
+@timer
 def main_loop(log_name):
-    """主逻辑 log_name:日志文件名"""
+    """log_name:日志文件名"""
     table_name = log_name.split('.access')[0].replace('.', '_')  # 将域名例如m.api转换成m_api,因为表名中不能包含'.'
-    results = []
     # 创建表
     create_table(table_name)
 
     # 当前日志文件总行数
     num = int(subprocess.run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=subprocess.PIPE,
                              universal_newlines=True).stdout.split()[0])
-    # print('num: {}'.format(num))  # debug
     # 上一次处理到的行数
-    ##prev_num = get_prev_num(table_name, log_name)
-    prev_num = 0
+    prev_num = get_prev_num(table_name, log_name)
     if prev_num is not None:
         # 根据当前行数和上次处理之后记录的行数对比,来决定本次要处理的行数范围
         i = 0
+        # 用于存放每行日志处理结果的列表,该列表长度达到limit后执行一次插入数据库操作
+        results = []
         with open(log_name) as fp:
             for line in fp:
                 i += 1
                 if i <= prev_num:
                     continue
                 elif prev_num < i <= num:
-                    insert_data(line, con_cur, results, 1000, table_name, log_name)
+                    '''对本次应该处理的行进行处理并入库'''
+                    line_result = process_line(line)
+                    results.append(line_result)
+                    if len(results) == limit:
+                        insert_correct(con_cur, results, table_name, log_name)
+                        results.clear()
+                        print('{} {} 处理至 {}'.format(time.strftime('%H:%M:%S', time.localtime()), log_name, line_result[5]))
                 else:
                     break
-        # 插入最后不足1000行的results
+        # 插入最后不足limit行的results
         if len(results) > 0:
             insert_correct(con_cur, results, table_name, log_name)
 
     del_old_data(table_name, log_name)
+
 
 if __name__ == "__main__":
     # 检测如果当前已经有该脚本在运行,则退出
