@@ -18,15 +18,17 @@ from collections import OrderedDict
 from zlib import crc32
 from multiprocessing import Pool
 
+
 ##### 自定义部分 #####
 # 定义日志格式，利用非贪婪匹配和分组匹配，需要严格参照日志定义中的分隔符和引号
 log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?)\] "(?P<request>.*?)"' \
               r' (?P<status>.*?) (?P<body_bytes_sent>.*?) (?P<request_time>.*?)' \
               r' "(?P<http_referer>.*?)" "(?P<http_user_agent>.*?)" - (?P<http_x_forwarded_for>.*)$'
-log_pattern_obj = re.compile(log_pattern)
+# request的正则，其实是由 "request_method request_uri server_protocol"三部分组成
+request_uri_pattern = r'^(?P<request_method>(GET|POST|HEAD|DELETE)?) (?P<request_uri>.*?) (?P<server_protocol>HTTP.*)$'
 # 日志目录
 log_dir = '/zz_data/nginx_log/'
-# 要处理的站点（可随需要向list中添加）
+# 要处理的站点（可随需要想list中添加）
 todo = ['www', 'user']
 # MySQL相关设置
 mysql_host = 'x.x.x.x'
@@ -38,24 +40,29 @@ mysql_database = 'log_analyse'
 creat_table = "CREATE TABLE IF NOT EXISTS {} (\
                 id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,\
                 server char(11) NOT NULL DEFAULT '',\
-                uri varchar(255) NOT NULL DEFAULT '' COMMENT '$uri,已做uridecode',\
-                uri_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面uri字段计算crc32',\
-                args varchar(255) NOT NULL DEFAULT '' COMMENT '$args,已做uridecode',\
-                args_abs_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面args字段进行抽象化然后计算crc32',\
+                uri_abs varchar(200) NOT NULL DEFAULT '' COMMENT '对$uri做uridecode,然后做抽象化处理',\
+                uri_abs_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面uri_abs字段计算crc32',\
+                args_abs varchar(200) NOT NULL DEFAULT '' COMMENT '对$args做uridecode,然后做抽象化处理',\
+                args_abs_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面args字段计算crc32',\
                 time_local timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',\
                 response_code smallint NOT NULL DEFAULT '0',\
-                bytes int NOT NULL DEFAULT '0',\
+                bytes_sent int NOT NULL DEFAULT '0' COMMENT '发送给客户端的响应大小',\
                 request_time float(6,3) NOT NULL DEFAULT '0.000',\
                 user_ip varchar(40) NOT NULL DEFAULT '',\
-                cdn_ip varchar(15) NOT NULL DEFAULT '' COMMENT 'CDN最后节点的ip:空子串表示没经过CDN; - 表示没经过CDN和F5',\
-                if_normal tinyint NOT NULL DEFAULT '0' \
-                    COMMENT '0(正则根本无法匹配该行日志或日志中$request内容异常) 1(uri和args均正常) 2(uri不正常) 3(参数不正常:通过大小判断,200b) 4(uri和参数都不正常))',\
+                cdn_ip varchar(15) NOT NULL DEFAULT '' COMMENT 'CDN最后节点的ip:空字串表示没经过CDN; - 表示没经过CDN和F5',\
+                request_method varchar(7) NOT NULL DEFAULT '',\
+                uri varchar(255) NOT NULL DEFAULT '' COMMENT '$uri,已做uridecode',\
+                args varchar(255) NOT NULL DEFAULT '' COMMENT '$args,已做uridecode',\
+                referer varchar(255) NOT NULL DEFAULT '' COMMENT '',\
                 KEY time_local (time_local),\
-                KEY uri_crc32 (uri_crc32),\
+                KEY uri_abs_crc32 (uri_abs_crc32),\
                 KEY args_abs_crc32 (args_abs_crc32)\
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 row_format=compressed"
 ##### 自定义部分结束 #####
 
+
+log_pattern_obj = re.compile(log_pattern)
+request_uri_pattern_obj = re.compile(request_uri_pattern)
 # 主机名
 global server
 server = gethostname()
@@ -94,9 +101,9 @@ def process_line(line_str):
     """
     processed = log_pattern_obj.search(line_str)
     if not processed:
-        '''如果正则根本就无法匹配改行记录时'''
-        print("Can't match the regex: {}".format(line_str))
-        return server, '', 0, '', 0, '', '', '', '', '', '', 0
+        '''如果正则根本就无法匹配该行记录时'''
+        print("Can't process this line: {}".format(line_str))
+        return server, '', 0, '', 0, '', '', '', '', '', ''
     else:
         # remote_addr (客户若不经过代理，则可认为用户的真实ip)
         remote_addr = processed.group('remote_addr')
@@ -107,63 +114,35 @@ def process_line(line_str):
         ori_time = time.strptime(time_local.split()[0], '%d/%b/%Y:%H:%M:%S')
         new_time = time.strftime('%Y-%m-%d %H:%M:%S', ori_time)
 
-        # 处理uri和参数
+        # 处理uri和args
         request = processed.group('request')
-        request_further = re.split(r'[\s]+', request)
-        if len(request_further) == 3:
-            '''正常，$request的值应该以空格分为三部分 method full_uri schema。有的异常记录可能会少某个字段'''
-            full_uri = request_further[1]
-            uri_args = full_uri.split('?', 1)
-            # 对日志中经过uri_encode过的字符进行还原
+        request_further = request_uri_pattern_obj.search(request)
+        if request_further:
+            request_method = request_further.group('request_method')
+            request_uri = request_further.group('request_uri')
+            uri_args = request_uri.split('?', 1)
+            # 对uri和args进行urldecode
             uri = unquote(uri_args[0])
-            if len(uri_args) == 1:
-                args = ''
-            else:
-                args = unquote(uri_args[1])
-
-                # 进一步处理args，将args中的参数部分做相应转换(抽象化)，规则：参数值不包含=的，转换为?；包含=的，若值由[a-zA-Z\-_]组成，则保留，其他情况值转为?
-                args_abs = ''
-                try:
-                    arg_dict = OrderedDict((tmp.split('=') for tmp in args.split('&')))
-                    for k, v in arg_dict.items():
-                        if not re.match(r'[a-zA-Z\-_]+$', v):
-                            '''value的值为全字母时，不进行转换'''
-                            arg_dict[k] = '?'
-                    for k, v in arg_dict.items():
-                        if args_abs == '':
-                            args_abs += '{}={}'.format(k, v)
-                        else:
-                            args_abs += '&{}={}'.format(k, v)
-                except ValueError as err:
-                    '''参数中没有= 或者 即没&也没= 会抛出ValueError'''
-                    args_abs = '?'
-
-            # 判断uri及args是否正常
-            # if_normal: 1(正常) 2(uri不正常,通过大小暂定200b) 3(args不正常,同过大小暂定200b;or '?' in args) 4(uri和args都不正常)
-            if len(uri) > 200:
-                if_normal = 2
-                if len(args) > 200 or '?' in args:
-                    if_normal = 4
-            else:
-                if_normal = 1
-                if len(args) > 200 or '?' in args:
-                    if_normal = 3
-
-            # 对库里的uri和args字段进行crc32校验
-            uri_crc32 = crc32(uri.encode())
-            args_abs_crc32 = 0 if args == '' else crc32(args_abs.encode())
+            args = '' if len(uri_args) == 1 else unquote(uri_args[1])
+            # 对uri和args进行抽象化
+            uri_abs = text_abstract(uri, 'uri')
+            args_abs = text_abstract(args, 'args')
+            # 对库里的uri_abs和args_abs字段进行crc32校验
+            uri_abs_crc32 = crc32(uri_abs.encode())
+            args_abs_crc32 = 0 if args_abs == '' else crc32(args_abs.encode())
         else:
-            '''$request不能被正确的被空格分为三段时，正常是可以的'''
             print('$request abnormal: {}'.format(line_str))
+            request_method = ''
             uri = request
-            uri_crc32 = 0
+            uri_abs = ''
+            uri_abs_crc32 = 0
             args = ''
+            args_abs = ''
             args_abs_crc32 = 0
-            if_normal = 0
 
         # 状态码,字节数,响应时间
         response_code = processed.group('status')
-        size = processed.group('body_bytes_sent')
+        bytes_sent = processed.group('body_bytes_sent')
         request_time = processed.group('request_time')
 
         # user_ip,cdn最后节点ip,以及是否经过F5
@@ -184,7 +163,55 @@ def process_line(line_str):
             user_ip = ips[0].rstrip(',')
             cdn_ip = ips[-1]
 
-        return server, uri, uri_crc32, args, args_abs_crc32, new_time, response_code, size, request_time, user_ip, cdn_ip, if_normal
+        return (server, uri_abs, uri_abs_crc32, args_abs, args_abs_crc32, new_time, response_code, bytes_sent,
+                request_time, user_ip, cdn_ip, request_method, uri, args)
+
+
+def text_abstract(text, what):
+    """进一步处理uri和args，将其做抽象化，方便对其进行归类
+    如uri: /article/10.html 抽象为 /article/?.html
+    如args: s=你好&type=0 抽象为 s=?&type=?
+    规则：待处理部分由[a-zA-Z\-_]组成的，则保留，其他情况值转为'?'
+    """
+    tmp_abs = ''
+    if what == 'uri':
+        uri_list = [tmp for tmp in text.split('/') if tmp != '']
+        if len(uri_list) == 0:
+            '''uri为"/"的情况'''
+            tmp_abs = '/'
+        else:
+            for i in range(len(uri_list)):
+                if not re.match(r'[a-zA-Z\-_]+?(\..*)?$', uri_list[i]):
+                    '''uri不符合规则时，进行转换'''
+                    if '.' in uri_list[i]:
+                        if not re.match(r'[a-zA-Z\-_]+$', uri_list[i].split('.')[0]):
+                            uri_list[i] = '?.' + uri_list[i].split('.')[1]
+                    else:
+                        uri_list[i] = '?'
+            for v in uri_list:
+                tmp_abs += '/{}'.format(v)
+            if text.endswith('/'):
+                '''如果原uri后面有"/"，要保留'''
+                tmp_abs += '/'
+    elif what == 'args':
+            if text == '':
+                tmp_abs = ''
+            else:
+                try:
+                    tmp_dict = OrderedDict((tmp.split('=') for tmp in text.split('&')))
+                    for k, v in tmp_dict.items():
+                        if not re.match(r'[a-zA-Z\-_]+$', v):
+                            '''除了value值为全字母的情况，都进行转换'''
+                            tmp_dict[k] = '?'
+                    for k, v in tmp_dict.items():
+                        if tmp_abs == '':
+                            tmp_abs += '{}={}'.format(k, v)
+                        else:
+                            tmp_abs += '&{}={}'.format(k, v)
+                except ValueError:
+                    '''参数中没有= 或者 即没&也没= 会抛出ValueError'''
+                    tmp_abs = '?'
+    return tmp_abs
 
 
 def insert_data(line_data, cursor, results, limit, t_name, l_name):
@@ -206,8 +233,9 @@ def insert_data(line_data, cursor, results, limit, t_name, l_name):
 
 def insert_correct(cursor, results, t_name, l_name):
     """在插入数据过程中处理异常"""
-    insert_sql = 'insert into {} (server,uri,uri_crc32,args,args_abs_crc32,time_local,response_code,bytes,request_time,user_ip,cdn_ip,if_normal) ' \
-                 'values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'.format(t_name)
+    insert_sql = 'insert into {} (server,uri_abs,uri_abs_crc32,args_abs,args_abs_crc32,time_local,response_code,' \
+                 'bytes_sent,request_time,user_ip,cdn_ip,request_method,uri,args) ' \
+                 'values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'.format(t_name)
     try:
         cursor.executemany(insert_sql, results)
     except pymysql.err.Warning as err:
@@ -240,10 +268,10 @@ def get_prev_num(t_name, l_name):
         return
 
 
-def del_old_data(t_name, l_name):
-    """删除3天前的数据"""
-    # 3天前的日期时间
-    three_days_ago = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() - 3600 * 24 * 3))
+def del_old_data(t_name, l_name, n=3):
+    """删除n天前的数据,n默认为3"""
+    # n天前的日期间
+    three_days_ago = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() - 3600 * 24 * n))
     try:
         con_cur.execute('select max(id) from {0} where time_local=('
                         'select max(time_local) from {0} where time_local!="0000-00-00 00:00:00" and time_local<="{1}")'.format(
@@ -268,7 +296,8 @@ def main_loop(log_name):
                              universal_newlines=True).stdout.split()[0])
     # print('num: {}'.format(num))  # debug
     # 上一次处理到的行数
-    prev_num = get_prev_num(table_name, log_name)
+    ##prev_num = get_prev_num(table_name, log_name)
+    prev_num = 0
     if prev_num is not None:
         # 根据当前行数和上次处理之后记录的行数对比,来决定本次要处理的行数范围
         i = 0
