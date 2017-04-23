@@ -29,16 +29,18 @@ log_dir = '/zz_data/nginx_log/'
 todo = ['www', 'user']
 # MySQL相关设置
 mysql_host = 'x.x.x.x'
-mysql_user = 'xxx'
-mysql_passwd = 'xxx'
+mysql_user = 'xxxx'
+mysql_passwd = 'xxxx'
 mysql_port = 3307
 mysql_database = 'log_analyse'
 # 表结构
 creat_table = "CREATE TABLE IF NOT EXISTS {} (\
                 id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,\
                 server char(11) NOT NULL DEFAULT '',\
-                url varchar(255) NOT NULL DEFAULT '' COMMENT '去掉参数的url,已做urldecode',\
-                url_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面url字段计算crc32',\
+                uri varchar(255) NOT NULL DEFAULT '' COMMENT '$uri,已做uridecode',\
+                uri_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面uri字段计算crc32',\
+                args varchar(255) NOT NULL DEFAULT '' COMMENT '$args,已做uridecode',\
+                args_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面args字段计算crc32',\
                 time_local timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',\
                 response_code smallint NOT NULL DEFAULT '0',\
                 bytes int NOT NULL DEFAULT '0',\
@@ -46,9 +48,10 @@ creat_table = "CREATE TABLE IF NOT EXISTS {} (\
                 user_ip varchar(40) NOT NULL DEFAULT '',\
                 cdn_ip varchar(15) NOT NULL DEFAULT '' COMMENT 'CDN最后节点的ip:空子串表示没经过CDN; - 表示没经过CDN和F5',\
                 if_normal tinyint NOT NULL DEFAULT '0' \
-                    COMMENT '0(正则根本无法匹配该行日志或日志中$request内容异常) 1(url和arg均正常) 2(url不正常) 3(参数不正常:通过大小判断,200bytes) 4(url和参数都不正常))',\
+                    COMMENT '0(正则根本无法匹配该行日志或日志中$request内容异常) 1(uri和args均正常) 2(uri不正常) 3(参数不正常:通过大小判断,200b) 4(uri和参数都不正常))',\
                 KEY time_local (time_local),\
-                KEY url_crc32 (url_crc32)\
+                KEY uri_crc32 (uri_crc32),\
+                KEY args_crc32 (args_crc32)\
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
 ##### 自定义部分结束 #####
 
@@ -92,7 +95,7 @@ def process_line(line_str):
     if not processed:
         '''如果正则根本就无法匹配改行记录时'''
         print("Can't match the regex: {}".format(line_str))
-        return server, '', 0, '', '', '', '', '', '', 0
+        return server, '', 0, '', 0, '', '', '', '', '', '', 0
     else:
         # remote_addr (客户若不经过代理，则可认为用户的真实ip)
         remote_addr = processed.group('remote_addr')
@@ -103,38 +106,41 @@ def process_line(line_str):
         ori_time = time.strptime(time_local.split()[0], '%d/%b/%Y:%H:%M:%S')
         new_time = time.strftime('%Y-%m-%d %H:%M:%S', ori_time)
 
-        # 处理url和参数
+        # 处理uri和参数
         request = processed.group('request')
         request_further = re.split(r'[\s]+', request)
         if len(request_further) == 3:
-            '''正常，$request的值应该以空格分为三部分 method full_url schema。有的异常记录可能会少某个字段'''
-            full_url = request_further[1]
-            url_arg = full_url.split('?', 1)
-            # 对日志中经过url_encode过的字符进行还原
-            url = unquote(url_arg[0])
-            if len(url_arg) == 1:
-                arg = ''
+            '''正常，$request的值应该以空格分为三部分 method full_uri schema。有的异常记录可能会少某个字段'''
+            full_uri = request_further[1]
+            uri_args = full_uri.split('?', 1)
+            # 对日志中经过uri_encode过的字符进行还原
+            uri = unquote(uri_args[0])
+            if len(uri_args) == 1:
+                args = ''
             else:
-                arg = unquote(url_arg[1])
+                args = unquote(uri_args[1])
 
-            # 判断url及arg是否正常
-            # if_normal: 1(正常) 2(url不正常,通过大小暂定200b) 3(arg不正常,同过大小暂定200b;or '?' in arg) 4(url和arg都不正常)
-            if len(url) > 200:
+            # 判断uri及args是否正常
+            # if_normal: 1(正常) 2(uri不正常,通过大小暂定200b) 3(args不正常,同过大小暂定200b;or '?' in args) 4(uri和args都不正常)
+            if len(uri) > 200:
                 if_normal = 2
-                if len(arg) > 200 or '?' in arg:
+                if len(args) > 200 or '?' in args:
                     if_normal = 4
             else:
                 if_normal = 1
-                if len(arg) > 200 or '?' in arg:
+                if len(args) > 200 or '?' in args:
                     if_normal = 3
 
-            # 对库里的url字段进行crc32校验
-            url_crc32 = crc32(url.encode())
+            # 对库里的uri和args字段进行crc32校验
+            uri_crc32 = crc32(uri.encode())
+            args_crc32 = crc32(args.encode())
         else:
             '''$request不能被正确的被空格分为三段时，正常是可以的'''
             print('$request abnormal: {}'.format(line_str))
-            url = request
-            url_crc32 = ''
+            uri = request
+            uri_crc32 = 0
+            args = ''
+            args_crc32 = 0
             if_normal = 0
 
         # 状态码,字节数,响应时间
@@ -160,7 +166,7 @@ def process_line(line_str):
             user_ip = ips[0].rstrip(',')
             cdn_ip = ips[-1]
 
-        return server, url, url_crc32, new_time, response_code, size, request_time, user_ip, cdn_ip, if_normal
+        return server, uri, uri_crc32, args, args_crc32, new_time, response_code, size, request_time, user_ip, cdn_ip, if_normal
 
 
 def insert_data(line_data, cursor, results, limit, t_name, l_name):
@@ -178,13 +184,13 @@ def insert_data(line_data, cursor, results, limit, t_name, l_name):
     if len(results) == limit:
         insert_correct(cursor, results, t_name, l_name)
         results.clear()
-        print('{} {} 处理至 {}'.format(time.strftime('%H:%M:%S', time.localtime()), l_name, line_result[3]))
+        print('{} {} 处理至 {}'.format(time.strftime('%H:%M:%S', time.localtime()), l_name, line_result[5]))
 
 
 def insert_correct(cursor, results, t_name, l_name):
     """在插入数据过程中处理异常"""
-    insert_sql = 'insert into {} (server,url,url_crc32,time_local,response_code,bytes,request_time,user_ip,cdn_ip,if_normal) ' \
-                 'values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'.format(t_name)
+    insert_sql = 'insert into {} (server,uri,uri_crc32,args,args_crc32,time_local,response_code,bytes,request_time,user_ip,cdn_ip,if_normal) ' \
+                 'values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'.format(t_name)
     try:
         cursor.executemany(insert_sql, results)
     except pymysql.err.Warning as err:
@@ -259,7 +265,7 @@ def main_loop(log_name):
                     insert_data(line, con_cur, results, 1000, table_name, log_name)
                 else:
                     break
-        # 插入不足1000行的results
+        # 插入最后不足1000行的results
         if len(results) > 0:
             insert_correct(con_cur, results, table_name, log_name)
 
