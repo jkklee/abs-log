@@ -7,25 +7,26 @@ Collect nginx access log, process it and insert the result into mysql in 1.21.
 """
 import os
 import re
-from sys import argv
 import subprocess
 import time
+import warnings
+import pymysql
+from sys import argv
 from socket import gethostname
 from urllib.parse import unquote
 from sys import exit
-import warnings
-import pymysql
+from zlib import crc32
 from multiprocessing import Pool
 
-# 定义日志格式，利用非贪婪匹配和分组匹配，需要严格参照日志定义中的分隔符和双引号
-# (编写正则时，先不要换行，确保空格或引号等与日志格式一致，最后考虑美观可以换行)
+
+# 定义日志格式，利用非贪婪匹配和分组匹配，需要严格参照日志定义中的分隔符和双引号（编写正则时，先不要换行，确保空格或引号等与日志格式一致，最后考虑美观可以换行）
 log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?)\] "(?P<request>.*?)"' \
               r' (?P<status>.*?) (?P<body_bytes_sent>.*?) (?P<request_time>.*?)' \
               r' "(?P<http_referer>.*?)" "(?P<http_user_agent>.*?)" - (?P<http_x_forwarded_for>.*)$'
 log_pattern_obj = re.compile(log_pattern)
 
 # 日志目录和需要处理的站点
-log_dir = '/data/nginx_log/'
+log_dir = '/zz_data/nginx_log/'
 todo = ['www', 'user']
 # exclude_ip = ['192.168.1.200', '192.168.1.202']
 # 主机名
@@ -54,12 +55,14 @@ def create_table(t_name):
     """创建表函数"""
     my_connect()
     try:
+        # url_digest char(32) NOT NULL DEFAULT '' COMMENT '对原始的不含参数的url计算MD5'
+        # KEY url_digest (url_digest(8))
         con_cur.execute(
             "CREATE TABLE IF NOT EXISTS {} (\
-                id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,\
+                id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,\
                 server char(11) NOT NULL DEFAULT '',\
                 url varchar(255) NOT NULL DEFAULT '' COMMENT '去掉参数的url,已做urldecode',\
-                url_digest char(32) NOT NULL DEFAULT '' COMMENT '对原始的不含参数的url计算MD5',\
+                url_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面url字段计算crc32',\
                 time_local timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',\
                 response_code smallint NOT NULL DEFAULT '0',\
                 bytes int NOT NULL DEFAULT '0',\
@@ -69,7 +72,7 @@ def create_table(t_name):
                 if_normal tinyint NOT NULL DEFAULT '0' \
                     COMMENT '0(正则根本无法匹配该行日志或日志中$request内容异常) 1(url和arg均正常) 2(url不正常) 3(参数不正常:通过大小判断,200bytes) 4(url和参数都不正常))',\
                 KEY time_local (time_local),\
-                KEY url_digest (url_digest(8))\
+                KEY url_crc32 (url_crc32)\
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4".format(t_name))
     except pymysql.err.Warning:
         pass
@@ -83,7 +86,7 @@ def process_line(line_str):
     processed = log_pattern_obj.search(line_str)
     if not processed:
         print("Can't match th regex: {}".format(line_str))
-        return server, '', '', '', '', '', '', '', '', 0
+        return server, '', 0, '', '', '', '', '', '', 0
     else:
         '''
         # 过滤F5的探测请求,返回None
@@ -125,13 +128,20 @@ def process_line(line_str):
                 if len(arg) > 200 or '?' in arg:
                     if_normal = 3
             # 计算url MD5(日志里的原始记录,可能是经过url_encode的,区别于写进数据库的url)
-            md5 = subprocess.run('echo "{}"|md5sum'.format(url_arg[0]), shell=True, stdout=subprocess.PIPE,
-                                 universal_newlines=True).stdout.split()[0]
+            # tmp = hashlib.md5()
+            # tmp.update(url.encode())
+            # md5 = tmp.hexdigest()
+            # 下面的方式耗费了原代码执行时间的95%以上
+            # md5 = subprocess.run('echo "{}"|md5sum'.format(url_arg[0]), shell=True, stdout=subprocess.PIPE,
+            #                     universal_newlines=True).stdout.split()[0]
+            # 对库里的url字段进行crc32校验
+            url_crc32 = crc32(url.encode())
         else:
             '''$request不能被正确的被空格分为三段时，正常是可以的'''
             print('$request abnormal: {}'.format(line_str))
             url = request
-            md5 = ''
+            # md5 = ''
+            url_crc32 = ''
             if_normal = 0
 
         # 状态码,字节数,响应时间
@@ -157,7 +167,7 @@ def process_line(line_str):
             user_ip = ips[0].rstrip(',')
             cdn_ip = ips[-1]
 
-        return server, url, md5, new_time, response_code, size, request_time, user_ip, cdn_ip, if_normal
+        return server, url, url_crc32, new_time, response_code, size, request_time, user_ip, cdn_ip, if_normal
 
 
 def insert_data(line_data, cursor, results, limit, t_name, l_name):
@@ -180,7 +190,7 @@ def insert_data(line_data, cursor, results, limit, t_name, l_name):
 
 def insert_correct(cursor, results, t_name, l_name):
     """在插入数据过程中处理异常"""
-    insert_sql = 'insert into {} (server,url,url_digest,time_local,response_code,bytes,request_time,user_ip,cdn_ip,if_normal) ' \
+    insert_sql = 'insert into {} (server,url,url_crc32,time_local,response_code,bytes,request_time,user_ip,cdn_ip,if_normal) ' \
                  'values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'.format(t_name)
     try:
         cursor.executemany(insert_sql, results)
@@ -230,7 +240,7 @@ def del_old_data(t_name, l_name):
 
 def main_loop(log_name):
     """主逻辑 log_name:日志文件名"""
-    table_name = log_name.split('.access')[0].replace('.', '_')  # 将域名例如v.api转换成v2_api,因为表名中不能包含'.'
+    table_name = log_name.split('.access')[0].replace('.', '_')  # 将域名例如v.api转换成v_api,因为表名中不能包含'.'
     results = []
     # 创建表
     create_table(table_name)
