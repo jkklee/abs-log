@@ -1,9 +1,9 @@
-#!/bin/env python3 
+#!/bin/env python3
 # coding:utf-8
 """
 ljk 20161116(update 20170217)
-This script should be put in crontab in every web server.Execute every 10 minutes.
-Collect nginx access log, process it and insert the result into mysql in 1.21.
+This script should be put in crontab in every web server.Execute every n minutes.
+Collect nginx access log, process it and insert the result into mysql.
 """
 import os
 import re
@@ -11,54 +11,30 @@ import subprocess
 import time
 import warnings
 import pymysql
-from sys import argv
+from sys import argv, exit
 from socket import gethostname
 from urllib.parse import unquote
-from sys import exit
 from zlib import crc32
 from multiprocessing import Pool
 
-
-# 定义日志格式，利用非贪婪匹配和分组匹配，需要严格参照日志定义中的分隔符和双引号（编写正则时，先不要换行，确保空格或引号等与日志格式一致，最后考虑美观可以换行）
+##### 自定义部分 #####
+# 定义日志格式，利用非贪婪匹配和分组匹配，需要严格参照日志定义中的分隔符和引号
 log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?)\] "(?P<request>.*?)"' \
               r' (?P<status>.*?) (?P<body_bytes_sent>.*?) (?P<request_time>.*?)' \
               r' "(?P<http_referer>.*?)" "(?P<http_user_agent>.*?)" - (?P<http_x_forwarded_for>.*)$'
 log_pattern_obj = re.compile(log_pattern)
-
-# 日志目录和需要处理的站点
+# 日志目录
 log_dir = '/zz_data/nginx_log/'
+# 要处理的站点（可随需要想list中添加）
 todo = ['www', 'user']
-# exclude_ip = ['192.168.1.200', '192.168.1.202']
-# 主机名
-global server
-server = gethostname()
-# 今天零点
-global today_start
-today_start = time.strftime('%Y-%m-%d', time.localtime()) + ' 00:00:00'
-# 将pymysql对于操作中的警告信息转为可捕捉的异常
-warnings.filterwarnings('error', category=pymysql.err.Warning)
-
-
-def my_connect():
-    """链接数据库函数"""
-    global connection, con_cur
-    try:
-        connection = pymysql.connect(host='x.x.x.x', user='xxxx', password='xxxx',
-                                     charset='utf8mb4', port=3307, autocommit=True, database='log_analyse')
-    except pymysql.err.MySQLError as err:
-        print('Error: ' + str(err))
-        exit(20)
-    con_cur = connection.cursor()
-
-
-def create_table(t_name):
-    """创建表函数"""
-    my_connect()
-    try:
-        # url_digest char(32) NOT NULL DEFAULT '' COMMENT '对原始的不含参数的url计算MD5'
-        # KEY url_digest (url_digest(8))
-        con_cur.execute(
-            "CREATE TABLE IF NOT EXISTS {} (\
+# MySQL相关设置
+mysql_host = 'x.x.x.x'
+mysql_user = 'xxxx'
+mysql_passwd = 'xxxx'
+mysql_port = 3307
+mysql_database = 'log_analyse'
+# 表结构
+creat_table = "CREATE TABLE IF NOT EXISTS {} (\
                 id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,\
                 server char(11) NOT NULL DEFAULT '',\
                 url varchar(255) NOT NULL DEFAULT '' COMMENT '去掉参数的url,已做urldecode',\
@@ -73,7 +49,36 @@ def create_table(t_name):
                     COMMENT '0(正则根本无法匹配该行日志或日志中$request内容异常) 1(url和arg均正常) 2(url不正常) 3(参数不正常:通过大小判断,200bytes) 4(url和参数都不正常))',\
                 KEY time_local (time_local),\
                 KEY url_crc32 (url_crc32)\
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4".format(t_name))
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+##### 自定义部分结束 #####
+
+# 主机名
+global server
+server = gethostname()
+# 今天零点
+global today_start
+today_start = time.strftime('%Y-%m-%d', time.localtime()) + ' 00:00:00'
+# 将pymysql对于操作中的警告信息转为可捕捉的异常
+warnings.filterwarnings('error', category=pymysql.err.Warning)
+
+
+def my_connect():
+    """链接数据库"""
+    global connection, con_cur
+    try:
+        connection = pymysql.connect(host=mysql_host, user=mysql_user, password=mysql_passwd,
+                                     charset='utf8mb4', port=mysql_port, autocommit=True, database=mysql_database)
+    except pymysql.err.MySQLError as err:
+        print('Error: ' + str(err))
+        exit(20)
+    con_cur = connection.cursor()
+
+
+def create_table(t_name):
+    """创建各站点对应的表"""
+    my_connect()
+    try:
+        con_cur.execute(creat_table.format(t_name))
     except pymysql.err.Warning:
         pass
 
@@ -85,15 +90,10 @@ def process_line(line_str):
     """
     processed = log_pattern_obj.search(line_str)
     if not processed:
-        print("Can't match th regex: {}".format(line_str))
+        '''如果正则根本就无法匹配改行记录时'''
+        print("Can't match the regex: {}".format(line_str))
         return server, '', 0, '', '', '', '', '', '', 0
     else:
-        '''
-        # 过滤F5的探测请求,返回None
-        for ip in exclude_ip:
-            if ip in step1[0]:
-                return server, '', '', '', '', '', '', ip, '-', ''
-        '''
         # remote_addr (客户若不经过代理，则可认为用户的真实ip)
         remote_addr = processed.group('remote_addr')
 
@@ -127,20 +127,13 @@ def process_line(line_str):
                 if_normal = 1
                 if len(arg) > 200 or '?' in arg:
                     if_normal = 3
-            # 计算url MD5(日志里的原始记录,可能是经过url_encode的,区别于写进数据库的url)
-            # tmp = hashlib.md5()
-            # tmp.update(url.encode())
-            # md5 = tmp.hexdigest()
-            # 下面的方式耗费了原代码执行时间的95%以上
-            # md5 = subprocess.run('echo "{}"|md5sum'.format(url_arg[0]), shell=True, stdout=subprocess.PIPE,
-            #                     universal_newlines=True).stdout.split()[0]
+
             # 对库里的url字段进行crc32校验
             url_crc32 = crc32(url.encode())
         else:
             '''$request不能被正确的被空格分为三段时，正常是可以的'''
             print('$request abnormal: {}'.format(line_str))
             url = request
-            # md5 = ''
             url_crc32 = ''
             if_normal = 0
 
@@ -173,8 +166,8 @@ def process_line(line_str):
 def insert_data(line_data, cursor, results, limit, t_name, l_name):
     """
     记录处理之后的数据,累积limit条执行一次插入
-    line_data:每行处理之前的字符串数据; 
-    limit:每limit行执行一次数据插入; 
+    line_data:每行处理之前的字符串数据;
+    limit:每limit行执行一次数据插入;
     t_name:对应的表名;
     l_name:日志文件名
     """
@@ -212,7 +205,9 @@ def get_prev_num(t_name, l_name):
         if min_id is not None:  # 假如有今天的数据
             con_cur.execute('select max(id) from {}'.format(t_name))
             max_id = con_cur.fetchone()[0]
-            con_cur.execute('select count(*) from {} where id>={} and id<={} and server="{}"'.format(t_name, min_id, max_id, server))
+            con_cur.execute(
+                'select count(*) from {} where id>={} and id<={} and server="{}"'.format(t_name, min_id, max_id,
+                                                                                         server))
             prev_num = con_cur.fetchone()[0]
         else:
             prev_num = 0
@@ -226,10 +221,11 @@ def get_prev_num(t_name, l_name):
 def del_old_data(t_name, l_name):
     """删除3天前的数据"""
     # 3天前的日期时间
-    three_days_ago = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()-3600*24*3))
+    three_days_ago = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() - 3600 * 24 * 3))
     try:
         con_cur.execute('select max(id) from {0} where time_local=('
-                        'select max(time_local) from {0} where time_local!="0000-00-00 00:00:00" and time_local<="{1}")'.format(t_name, three_days_ago))
+                        'select max(time_local) from {0} where time_local!="0000-00-00 00:00:00" and time_local<="{1}")'.format(
+            t_name, three_days_ago))
         max_id = con_cur.fetchone()[0]
         if max_id is not None:
             con_cur.execute('delete from {} where id<={}'.format(t_name, max_id))
@@ -240,14 +236,15 @@ def del_old_data(t_name, l_name):
 
 def main_loop(log_name):
     """主逻辑 log_name:日志文件名"""
-    table_name = log_name.split('.access')[0].replace('.', '_')  # 将域名例如v.api转换成v_api,因为表名中不能包含'.'
+    table_name = log_name.split('.access')[0].replace('.', '_')  # 将域名例如m.api转换成m_api,因为表名中不能包含'.'
     results = []
     # 创建表
     create_table(table_name)
 
     # 当前日志文件总行数
-    num = int(subprocess.run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=subprocess.PIPE, universal_newlines=True).stdout.split()[0])
-    print('num: {}'.format(num))  #debug
+    num = int(subprocess.run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=subprocess.PIPE,
+                             universal_newlines=True).stdout.split()[0])
+    print('num: {}'.format(num))  # debug
     # 上一次处理到的行数
     prev_num = get_prev_num(table_name, log_name)
     if prev_num is not None:
@@ -268,14 +265,14 @@ def main_loop(log_name):
 
     del_old_data(table_name, log_name)
 
-
 if __name__ == "__main__":
     # 检测如果当前已经有该脚本在运行,则退出
-    if_run=subprocess.run('ps -ef|grep {}|grep -v grep|grep -v "/bin/sh"|wc -l'.format(argv[0]),shell=True,stdout=subprocess.PIPE).stdout
+    if_run = subprocess.run('ps -ef|grep {}|grep -v grep|grep -v "/bin/sh"|wc -l'.format(argv[0]), shell=True,
+                            stdout=subprocess.PIPE).stdout
     if if_run.decode().strip('\n') == '1':
         os.chdir(log_dir)
-        logs_list=os.listdir(log_dir)
-        logs_list=[i for i in logs_list if 'access' in i  and os.path.isfile(i) and i.split('.access')[0] in todo]
+        logs_list = os.listdir(log_dir)
+        logs_list = [i for i in logs_list if 'access' in i and os.path.isfile(i) and i.split('.access')[0] in todo]
         # 并行
         with Pool(len(logs_list)) as p:
-            p.map(main_loop,logs_list)
+            p.map(main_loop, logs_list)
