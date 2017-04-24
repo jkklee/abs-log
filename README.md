@@ -115,5 +115,17 @@ mysql> select uri_abs,count(*) as num,sum(bytes_sent) as total_bytes,sum(bytes_s
 以上只列举了几个例子，基本上除了UA部分（代码中已有捕捉，但是笔者用不到），其他的信息都以包含到表中。因此几乎可以对网站`流量`，`负载`,`响应时间`等方面的任何疑问给出数据上的支持。
 
 ### 注意事项：
-Python外部包依赖：pymysql
+Python外部包依赖：pymysql  
 MySQL（笔者5.6版本）将`innodb_file_format`设置为`Barracuda`（这个设置并不对其他库表产生影响，即使生产数据库设置也无妨）,以便在建表语句中可以通过`ROW_FORMAT=COMPRESSED`将innodb表这只为压缩模式，笔者实验开启压缩模式后，数据文件大小将近减小50%。
+
+### 使用说明：
+该脚本的设计目标是将其放到web server的的计划任务里，定时（例如每10分钟/30分钟，自定义）执行，在需要时通过MySQL进行需要的分析即可。
+`*/30 * * * * export LANG=zh_CN.UTF-8;python3 /root/log_analyse_parall.py &> /tmp/log_analyse.log`
+
+### 性能测试：
+现在的版本，进过分析的数据最终存储到MySQL中，所以脚本执行过程中向MySQL的插入语句耗费了绝大多数执行时间，在笔者的4核4G的虚拟机上，以20w的真实日志数据进行单进程测试，结果如下
+```
+有入库    22.40s
+无入库    4.56s
+```
+差别非常大，这也是笔者下一步打算更换MySQL存储的驱动力（例如MongoDB）
