@@ -54,7 +54,7 @@ log_pattern_obj = re.compile(log_pattern)
         server: web6
        uri_abs: /chapter/?/?.json
  uri_abs_crc32: 443227294
-      args_abs: channel=ios&version=?
+      args_abs: channel=?&version=?
 args_abs_crc32: 2972340533
     time_local: 2017-02-22 23:59:01
  response_code: 200
