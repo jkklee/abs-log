@@ -250,7 +250,7 @@ def get_prev_num(t_name, l_name):
 @timer
 def del_old_data(t_name, l_name, n=3):
     """删除n天前的数据,n默认为3"""
-    have_del = con_cur.execute('select count(*) from information_schema.processlist where info like "delete from {}%"'.format(t_name))
+    have_del = con_cur.execute('select info from information_schema.processlist where info like "delete from {}%"'.format(t_name))
     if have_del < 1:
         '''避免多个server都发起删除请求'''
         # n天前的日期间
