@@ -250,18 +250,20 @@ def get_prev_num(t_name, l_name):
 @timer
 def del_old_data(t_name, l_name, n=3):
     """删除n天前的数据,n默认为3"""
-    # n天前的日期间
-    three_days_ago = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() - 3600 * 24 * n))
-    try:
-        con_cur.execute('select max(id) from {0} where time_local=('
-                        'select max(time_local) from {0} where time_local!="0000-00-00 00:00:00" and time_local<="{1}")'.format(
-            t_name, three_days_ago))
-        max_id = con_cur.fetchone()[0]
-        if max_id is not None:
-            con_cur.execute('delete from {} where id<={}'.format(t_name, max_id))
-    except pymysql.err.MySQLError as err:
-        print('\n{}    Error: {}'.format(l_name, err))
-        print('未能删除表3天前的数据...\n')
+    have_del = con_cur.execute('select count(*) from information_schema.processlist where info like "delete from {}%"'.format(t_name))
+    if have_del < 1:
+        '''避免多个server都发起删除请求'''
+        # n天前的日期间
+        n_days_ago = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() - 3600 * 24 * n))
+        try:
+            con_cur.execute('select max(id) from {0} where time_local=(select max(time_local) from {0}\
+                             where time_local!="0000-00-00 00:00:00" and time_local<="{1}")'.format(t_name, n_days_ago))
+            max_id = con_cur.fetchone()[0]
+            if max_id is not None:
+                con_cur.execute('delete from {} where id<={}'.format(t_name, max_id))
+        except pymysql.err.MySQLError as err:
+            print('\n{}    Error: {}'.format(l_name, err))
+            print('未能删除{}天前的数据...\n'.format(n))
 
 
 @timer
