@@ -1,7 +1,7 @@
 #!/bin/env python3
 # coding:utf-8
 """
-ljk 20161116(update 20170217)
+ljk 20161116(update 20170510)
 This script should be put in crontab in every web server.Execute every n minutes.
 Collect nginx access log, process it and insert the result into mysql.
 """
@@ -9,127 +9,75 @@ import os
 import re
 import subprocess
 import time
-import warnings
-import pymysql
+import pymongo
 from sys import argv, exit
 from socket import gethostname
 from urllib.parse import unquote
-from zlib import crc32
 from multiprocessing import Pool
 from functools import wraps
+from random import choice
+
+# ---------- 自定义部分 ----------#
+# -----日志格式
+# 利用非贪婪匹配和分组匹配，需要严格参照日志定义中的分隔符和引号
+log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?) \+0800\] "(?P<request>.*?)"' \
+              r' (?P<status>.*?) (?P<body_bytes_sent>.*?) (?P<request_time>.*?)' \
+              r' "(?P<http_referer>.*?)" "(?P<http_user_agent>.*?)" - (?P<http_x_forwarded_for>.*)$'
+# request的正则，其实是由 "request_method request_uri server_protocol"三部分组成
+request_uri_pattern = r'^(?P<request_method>(GET|POST|HEAD|DELETE|PUT|OPTIONS)?) ' \
+                      r'(?P<request_uri>.*?) ' \
+                      r'(?P<server_protocol>.*)$'
+
+# -----日志相关
+log_dir = '/data/nginx_log/'
+# 要处理的站点（可随需要向list中添加）
+todo = ['www', 'm', 'user']
+exclude_ip = []
+
+# -----mongo连接
+mongo_host = '172.16.2.24'
+mongo_port = 27017
+# mongodb存储结构为每个站点对应一个库, 每天对应一个集合, 日志文件每分钟的数据分析合并后放到一个文档里(分析粒度达到分钟级)
+
+# -----结果入库及存储
+max_uri_num = 300
+max_arg_num = 50
+
+# ---------- 自定义部分结束 ----------#
 
 
-def timer(function):
-    @wraps(function)
+def timer(func):
+    @wraps(func)
     def inner_func(*args, **kwargs):
         t0 = time.time()
-        result_ = function(*args, **kwargs)
+        result_ = func(*args, **kwargs)
         t1 = time.time()
-        print("Total time running %s: %s seconds" % (function.__name__, str(t1 - t0)))
+        print("Time running %s: %s seconds" % (func.__name__, str(t1 - t0)))
         return result_
 
     return inner_func
 
-
-# ---------- 自定义部分 ----------#
-# 定义日志格式，利用非贪婪匹配和分组匹配，需要严格参照日志定义中的分隔符和引号
-log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?)\] "(?P<request>.*?)"' \
-              r' (?P<status>.*?) (?P<body_bytes_sent>.*?) (?P<request_time>.*?)' \
-              r' "(?P<http_referer>.*?)" "(?P<http_user_agent>.*?)" - (?P<http_x_forwarded_for>.*)$'
-# request的正则，其实是由 "request_method request_uri server_protocol"三部分组成
-request_uri_pattern = r'^(?P<request_method>(GET|POST|HEAD|DELETE)?) (?P<request_uri>.*?) (?P<server_protocol>HTTP.*)$'
-# 日志目录
-log_dir = '/zz_data/nginx_log/'
-# 要处理的站点（可随需要想list中添加）
-todo = ['www', 'user']
-# MySQL相关设置
-mysql_host = 'x.x.x.x'
-mysql_user = 'xxxx'
-mysql_passwd = 'xxxx'
-mysql_port = 3307
-mysql_database = 'log_analyse'
-# 表结构
-table_format = "CREATE TABLE IF NOT EXISTS {} (\
-                id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,\
-                server char(11) NOT NULL DEFAULT '',\
-                uri_abs varchar(200) NOT NULL DEFAULT '' COMMENT '对$uri做uridecode,然后做抽象化处理',\
-                uri_abs_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面uri_abs字段计算crc32',\
-                args_abs varchar(200) NOT NULL DEFAULT '' COMMENT '对$args做uridecode,然后做抽象化处理',\
-                args_abs_crc32 bigint unsigned NOT NULL DEFAULT '0' COMMENT '对上面args字段计算crc32',\
-                time_local timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',\
-                response_code smallint NOT NULL DEFAULT '0',\
-                bytes_sent int NOT NULL DEFAULT '0' COMMENT '发送给客户端的响应大小',\
-                request_time float(6,3) NOT NULL DEFAULT '0.000',\
-                user_ip varchar(40) NOT NULL DEFAULT '',\
-                cdn_ip varchar(15) NOT NULL DEFAULT '' COMMENT 'CDN最后节点的ip:空字串表示没经过CDN; - 表示没经过CDN和F5',\
-                request_method varchar(7) NOT NULL DEFAULT '',\
-                uri varchar(255) NOT NULL DEFAULT '' COMMENT '$uri,已做uridecode',\
-                args varchar(255) NOT NULL DEFAULT '' COMMENT '$args,已做uridecode',\
-                referer varchar(255) NOT NULL DEFAULT '' COMMENT '',\
-                KEY time_local (time_local),\
-                KEY uri_abs_crc32 (uri_abs_crc32),\
-                KEY args_abs_crc32 (args_abs_crc32)\
-              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 row_format=compressed"
-# 每处理limit条日志,执行一次数据库插入操作(多行插入,减少和数据库间的交互)
-limit = 1000
-# ---------- 自定义部分结束 ----------#
-
-
-log_pattern_obj = re.compile(log_pattern)
-request_uri_pattern_obj = re.compile(request_uri_pattern)
-# 主机名
-global server
-server = gethostname()
-# 今天零点
-global today_start
-today_start = time.strftime('%Y-%m-%d', time.localtime()) + ' 00:00:00'
-# 将pymysql对于操作中的警告信息转为可捕捉的异常
-warnings.filterwarnings('error', category=pymysql.err.Warning)
-
-
-@timer
-def my_connect():
-    """链接数据库"""
-    global connection, con_cur
-    try:
-        connection = pymysql.connect(host=mysql_host, user=mysql_user, password=mysql_passwd,
-                                     charset='utf8mb4', port=mysql_port, autocommit=True, database=mysql_database)
-    except pymysql.err.MySQLError as err:
-        print('Error: ' + str(err))
-        exit(20)
-    con_cur = connection.cursor()
-
-
-@timer
-def create_table(t_name):
-    """创建各站点对应的表"""
-    my_connect()
-    try:
-        con_cur.execute(table_format.format(t_name))
-    except pymysql.err.Warning:
-        pass
-    except pymysql.err.MySQLError as err:
-        print('\n{}    Error: {}'.format(t_name, err))
-        connection.close()
-        exit(10)
-
+def my_connect(db_name):
+    """获得MongoClient对象,进而获得Database(MongoClient）对象
+    db_name:mongodb的库名(不同站点对应不同的库名)"""
+    global mongo_client, mongo_db
+    mongo_client = pymongo.MongoClient(mongo_host, mongo_port)
+    mongo_db = mongo_client[db_name]
 
 def process_line(line_str):
     """
     处理每一行记录
-    line_str: 该行数据的字符串形式
+    line_str: 该行日志的原始形式
     """
     processed = log_pattern_obj.search(line_str)
     if not processed:
         '''如果正则根本就无法匹配该行记录时'''
         print("Can't process this line: {}".format(line_str))
-        return server, '', 0, '', 0, '', '', '', '', '', '', '', '', ''
+        return
     else:
         # remote_addr (客户若不经过代理，则可认为用户的真实ip)
         remote_addr = processed.group('remote_addr')
-
-        # time_local
-        time_local = ngx_time_local_to_mysql_timestamp(processed.group('time_local').split()[0])
+        time_local = processed.group('time_local')
 
         # 处理uri和args
         request = processed.group('request')
@@ -144,18 +92,9 @@ def process_line(line_str):
             # 对uri和args进行抽象化
             uri_abs = text_abstract(uri, 'uri')
             args_abs = text_abstract(args, 'args')
-            # 对库里的uri_abs和args_abs字段进行crc32校验
-            uri_abs_crc32 = crc32(uri_abs.encode())
-            args_abs_crc32 = 0 if args_abs == '' else crc32(args_abs.encode())
         else:
             print('$request abnormal: {}'.format(line_str))
-            request_method = ''
-            uri = request
-            uri_abs = ''
-            uri_abs_crc32 = 0
-            args = ''
-            args_abs = ''
-            args_abs_crc32 = 0
+            return
 
         # 状态码,字节数,响应时间
         response_code = processed.group('status')
@@ -180,18 +119,9 @@ def process_line(line_str):
             user_ip = ips[0].rstrip(',')
             cdn_ip = ips[-1]
 
-        return (server, uri_abs, uri_abs_crc32, args_abs, args_abs_crc32, time_local, response_code, bytes_sent,
-                request_time, user_ip, cdn_ip, request_method, uri, args)
-
-
-def ngx_time_local_to_mysql_timestamp(ngx_time_local):
-    month_dict={'Jan':'01','Feb':'02','Mar':'03','Apr':'04','May':'05','Jun':'06',
-                'Jul':'07','Aug':'08','Sep':'09','Oct':'10','Nov':'11','Dec':'12'}
-    # tmp中元素顺序: '%d/%b/%Y:%H:%M:%S'
-    tmp=re.split('/|:',ngx_time_local)
-    # 返回格式: '%Y-%m-%d %H:%M:%S'
-    return '{}-{}-{} {}:{}:{}'.format(tmp[2], month_dict[tmp[1]], tmp[0], tmp[3], tmp[4], tmp[5])
-
+        return {'uri_abs': uri_abs, 'args_abs': args_abs, 'time_local': time_local, 'response_code': response_code,
+                'bytes_sent': int(bytes_sent), 'request_time': float(request_time), 'user_ip': user_ip,
+                'cdn_ip': cdn_ip, 'request_method': request_method, 'request_uri': request_uri}
 
 def text_abstract(text, what):
     """
@@ -203,117 +133,199 @@ def text_abstract(text, what):
     what: uri 或 args
     """
     if what == 'uri':
-        return re.sub('[0-9]+','?',text)
+        step1 = re.sub(r'/[0-9]+\.', r'/?.', text)
+        step2 = re.sub(r'/[0-9]+$', r'/?', step1)
+        while re.search(r'/[0-9]+/', step2):
+            step2 = re.sub(r'/[0-9]+/', r'/?/', step2)
+        return step2
     elif what == 'args':
-        return re.sub('=[^&=]+','=?',text)
+        return re.sub('=[^&=]+', '=?', text)
 
-
-def insert_correct(cursor, results, t_name, l_name):
-    """多行插入,并且处理在插入过程中的异常"""
-    insert_sql = 'insert into {} (server,uri_abs,uri_abs_crc32,args_abs,args_abs_crc32,time_local,response_code,' \
-                 'bytes_sent,request_time,user_ip,cdn_ip,request_method,uri,args) ' \
-                 'values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'.format(t_name)
+def insert_mongo(mongo_db_obj, results, t_name, l_name, num, date, s_name):
+    """插入mongodb, 在主进程中根据函数返回值来决定是否退出对日志文件的循环，进而退出主进程
+    results: mongodb文档
+    t_name: 集合名称
+    l_name: 日志名称
+    num: 当前已入库的行数
+    date: 今天日期,格式 20170515
+    s_name: 主机名"""
     try:
-        cursor.executemany(insert_sql, results)
-    except pymysql.err.Warning as err:
-        print('\n{}    Warning: {}'.format(l_name, err))
-    except pymysql.err.MySQLError as err:
-        print('\n{}    Error: {}'.format(l_name, err))
-        print('插入数据时出错...\n')
-        connection.close()
-        exit(10)
+        mongo_db_obj[t_name].insert(results)  # 插入数据
+        # 同时插入每台server已处理的行数
+        mongo_db_obj['last_num'].update({}, {'$set': {'last_num': num, 'date': date, 'server': s_name}}, upsert=True)
+        return True
+    except Exception as err:
+        print('{}: 插入数据时出错...'.format(l_name))
+        print('Error: {}\n'.format(err))
+        mongo_client.close()
 
 
-@timer
-def get_prev_num(t_name, l_name):
-    """取得今天已入库的行数 t_name:表名 l_name:日志文件名"""
+def get_prev_num(l_name):
+    """取得今天已入库的行数 
+    l_name:日志文件名"""
     try:
-        con_cur.execute('select min(id) from {0} where time_local=('
-                        'select min(time_local) from {0} where time_local>="{1}")'.format(t_name, today_start))
-        min_id = con_cur.fetchone()[0]
-        if min_id is not None:  # 假如有今天的数据
-            con_cur.execute('select max(id) from {}'.format(t_name))
-            max_id = con_cur.fetchone()[0]
-            con_cur.execute(
-                'select count(*) from {} where id>={} and id<={} and server="{}"'.format(t_name, min_id, max_id,
-                                                                                         server))
-            prev_num = con_cur.fetchone()[0]
-        else:
+        tmp = mongo_db['last_num'].find({'date': today, 'server': server}, {'last_num': 1, '_id': 0})
+        if tmp.count() == 1:
+            for i in tmp:
+                prev_num = i['last_num']
+                return prev_num
+        elif tmp.count() == 0:
             prev_num = 0
-        return prev_num
-    except pymysql.err.MySQLError as err:
+            return prev_num
+        else:
+            print('Error:"{}"未取得已入库的行数,本次跳过\n'.format(l_name))
+    except Exception as err:
         print('Error: {}'.format(err))
-        print('Error:未取得已入库的行数,本次跳过{}\n'.format(l_name))
-        return
-
+        print('Error:"{}"未取得已入库的行数,本次跳过\n'.format(l_name))
 
 @timer
-def del_old_data(t_name, l_name, n=3):
-    """删除n天前的数据,n默认为3"""
-    have_del = con_cur.execute('select info from information_schema.processlist where info like "delete from {}%"'.format(t_name))
-    if have_del < 1:
-        '''避免多个server都发起删除请求'''
-        # n天前的日期间
-        n_days_ago = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() - 3600 * 24 * n))
-        try:
-            con_cur.execute('select max(id) from {0} where time_local=(select max(time_local) from {0}\
-                             where time_local!="0000-00-00 00:00:00" and time_local<="{1}")'.format(t_name, n_days_ago))
-            max_id = con_cur.fetchone()[0]
-            if max_id is not None:
-                con_cur.execute('delete from {} where id<={}'.format(t_name, max_id))
-        except pymysql.err.MySQLError as err:
-            print('\n{}    Error: {}'.format(l_name, err))
-            print('未能删除{}天前的数据...\n'.format(n))
-
+def del_old_data(t_name, l_name, n=2):
+    """删除n天前的数据,n默认为2"""
+    try:
+        pass
+    except pymysql.err.MySQLError as err:
+        print('{}    Error: {}'.format(l_name, err))
+        print('未能删除{}天前的数据...\n'.format(n))
 
 @timer
 def main_loop(log_name):
     """log_name:日志文件名"""
-    table_name = log_name.split('.access')[0].replace('.', '_')  # 将域名例如m.api转换成m_api,因为表名中不能包含'.'
-    # 创建表
-    create_table(table_name)
+    invalid = 0  # 无效的请求数
+    tmp_res = {}  # 存储处理过程中用于保存一分钟内的各项原始数据
+    # 下面3个变量用于生成mongodb的_id
+    # 当前处理的一分钟(亦即mongodb文档_id键的一部分,初始为''),格式: 0101(1点1分).(对日志数据以分钟为粒度进行处理分析)
+    this_h_m = ''
+    random_char = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    month_dict = {'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'May': '05', 'Jun': '06',
+                  'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'}
 
+    # mongodb 中的库名
+    mongo_db_name = log_name.split('.access')[0]
+    my_connect(mongo_db_name)
+
+    # 开始处理逻辑
     # 当前日志文件总行数
     num = int(subprocess.run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=subprocess.PIPE,
                              universal_newlines=True).stdout.split()[0])
     # 上一次处理到的行数
-    prev_num = get_prev_num(table_name, log_name)
-    if prev_num is not None:
+    prev_num_outer = get_prev_num(log_name)
+    if prev_num_outer is not None:
         # 根据当前行数和上次处理之后记录的行数对比,来决定本次要处理的行数范围
         i = 0
-        # 用于存放每行日志处理结果的列表,该列表长度达到limit后执行一次插入数据库操作
-        results = []
         with open(log_name) as fp:
             for line in fp:
                 i += 1
-                if i <= prev_num:
+                if i <= prev_num_outer:
                     continue
-                elif prev_num < i <= num:
-                    '''对本次应该处理的行进行处理并入库'''
-                    line_result = process_line(line)
-                    results.append(line_result)
-                    if len(results) == limit:
-                        insert_correct(con_cur, results, table_name, log_name)
-                        results.clear()
-                        print('{} {} 处理至 {}'.format(time.strftime('%H:%M:%S', time.localtime()), log_name, line_result[5]))
-                else:
+                elif i > num:
                     break
-        # 插入最后不足limit行的results
-        if len(results) > 0:
-            insert_correct(con_cur, results, table_name, log_name)
+                # 接下来对本次应该处理的并且正常的行进行处理
+                line_res = process_line(line)
+                if not line_res:
+                    invalid += 1
+                    continue
+                date_time = line_res['time_local'].split(':')
+                hour = date_time[1]
+                minute = date_time[2]
+                if this_h_m != '' and this_h_m != hour + minute:
+                    '''分钟粒度交替时: 从临时字典中汇总上一分钟的结果并将其入库'''
+                    # 存储一分钟区间内的最终汇总结果
+                    prev_num_inner = get_prev_num(log_name)
+                    this_minute_res = {
+                        '_id': server + '-' + y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char),
+                        'total_hits': i - 1 - prev_num_inner,
+                        'invalid_hits': invalid,
+                        'requests': []}
 
-    del_old_data(table_name, log_name)
+                    # 对tmp_res里的原始数据进行整合,插入到this_minute_res['request']中,生成最终存储到mongodb的文档(字典)
+                    # 最终一个uri_abs在this_minute_res中对应的格式如下
+                    for uri_k, uri_v in sorted(tmp_res.items(), key=lambda item: item[1]['hits'], reverse=True)[
+                                        :max_uri_num]:
+                        '''取点击量前max_uri_num的uri_abs'''
+                        single_uri_dict = {'uri_abs': uri_k, 'hits': uri_v['hits'],
+                                           'max_time': max(uri_v['time']),
+                                           'min_time': min(uri_v['time']),
+                                           'avg_time': format(sum(uri_v['time']) / len(uri_v['time']), '.2f'),
+                                           'max_bytes': max(uri_v['bytes']),
+                                           'min_bytes': min(uri_v['bytes']),
+                                           'avg_bytes': format(sum(uri_v['bytes']) / len(uri_v['bytes']), '.2f'),
+                                           'args': []}
+                        for arg_k, arg_v in sorted(uri_v['args'].items(), key=lambda item: item[1]['hits'],
+                                                   reverse=True)[:max_arg_num]:
+                            '''取点击量前max_arg_num的args_abs'''
+                            single_arg_dict = {'args_abs': arg_k, 'hits': arg_v['hits'],
+                                               'max_time': max(arg_v['time']),
+                                               'min_time': min(arg_v['time']),
+                                               'avg_time': format(sum(arg_v['time']) / len(arg_v['time']), '.2f'),
+                                               'max_bytes': max(arg_v['bytes']),
+                                               'min_bytes': min(arg_v['bytes']),
+                                               'avg_bytes': format(sum(arg_v['bytes']) / len(arg_v['bytes']), '.2f'),
+                                               'method': arg_v['method'],
+                                               'example': arg_v['example']}
+                            single_uri_dict['args'].append(single_arg_dict)
+                        this_minute_res['requests'].append(single_uri_dict)
 
+                    # 执行插入操作(每分钟的最终结果)
+                    if not insert_mongo(mongo_db, this_minute_res, y_m_d, log_name, i - 1, y_m_d, server):
+                        break
+                    # 清空临时字典tmp_res和invalid
+                    tmp_res.clear()
+                    invalid = 0
+                    print('{} 处理至 {}'.format(log_name, line_res['time_local']))
+
+                uri_abs = line_res['uri_abs']
+                args_abs = line_res['args_abs']
+                if uri_abs in tmp_res:
+                    '''将uri数据汇总至临时字典'''
+                    tmp_res[uri_abs]['time'].append(line_res['request_time'])
+                    tmp_res[uri_abs]['bytes'].append(line_res['bytes_sent'])
+                    tmp_res[uri_abs]['hits'] += 1
+                else:
+                    tmp_res[uri_abs] = {'time': [line_res['request_time']],
+                                        'bytes': [line_res['bytes_sent']],
+                                        'hits': 1,
+                                        'args': {}}
+
+                if args_abs in tmp_res[uri_abs]['args']:
+                    '''将args数据汇总到临时字典'''
+                    tmp_res[uri_abs]['args'][args_abs]['time'].append(line_res['request_time'])
+                    tmp_res[uri_abs]['args'][args_abs]['bytes'].append(line_res['bytes_sent'])
+                    tmp_res[uri_abs]['args'][args_abs]['hits'] += 1
+                else:
+                    tmp_res[uri_abs]['args'][args_abs] = {'time': [line_res['request_time']],
+                                                          'bytes': [line_res['bytes_sent']],
+                                                          'hits': 1,
+                                                          'method': line_res['request_method'],
+                                                          'example': line_res['request_uri']}
+
+                date = date_time[0]
+                # 以下3行用于生成mongodb中文档的_id
+                d_m_y = date.split('/')
+                y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]  # 作为mongodb库里的集合的名称(每天一个集合)
+                this_h_m = hour + minute
+                if y_m_d != today:
+                    print('日志不是今天的,将退出')
+                    break
+                    # del_old_data(table_name, log_name)
 
 if __name__ == "__main__":
+    # global server, today
+    server = gethostname()  # 主机名
+    today = time.strftime('%y%m%d', time.localtime())  # 今天日期
+    log_pattern_obj = re.compile(log_pattern)
+    request_uri_pattern_obj = re.compile(request_uri_pattern)
+
     # 检测如果当前已经有该脚本在运行,则退出
     if_run = subprocess.run('ps -ef|grep {}|grep -v grep|grep -v "/bin/sh"|wc -l'.format(argv[0]), shell=True,
                             stdout=subprocess.PIPE).stdout
     if if_run.decode().strip('\n') == '1':
         os.chdir(log_dir)
-        logs_list = os.listdir(log_dir)
-        logs_list = [i for i in logs_list if 'access' in i and os.path.isfile(i) and i.split('.access')[0] in todo]
+        logs_list = [i for i in os.listdir(log_dir) if
+                     'access' in i and os.path.isfile(i) and i.split('.access')[0] in todo]
         if len(logs_list) > 0:
             # 并行
-            with Pool(len(logs_list)) as p:
-                p.map(main_loop, logs_list)
+            try:
+                with Pool(len(logs_list)) as p:
+                    p.map(main_loop, logs_list)
+            except KeyboardInterrupt:
+                exit(10)
