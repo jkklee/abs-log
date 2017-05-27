@@ -155,7 +155,11 @@ def insert_mongo(mongo_db_obj, results, t_name, l_name, num, date, s_name):
     try:
         mongo_db_obj[t_name].insert(results)  # 插入数据
         # 同时插入每台server已处理的行数
-        mongo_db_obj['last_num'].update({}, {'$set': {'last_num': num, 'date': date, 'server': s_name}}, upsert=True)
+        if mongo_db_obj['last_num'].find({'server': server}).count() == 0:
+            mongo_db_obj['last_num'].update({}, {'$set': {'last_num': num, 'date': date, 'server': s_name}}, upsert=True)
+        else:
+            mongo_db_obj['last_num'].update({'server': server}, {'$set': {'last_num': num, 'date': date}})
+
         return True
     except Exception as err:
         print('{}: 插入数据时出错...'.format(l_name))
@@ -164,7 +168,7 @@ def insert_mongo(mongo_db_obj, results, t_name, l_name, num, date, s_name):
 
 
 def get_prev_num(l_name):
-    """取得今天已入库的行数 
+    """取得本server今天已入库的行数 
     l_name:日志文件名"""
     try:
         tmp = mongo_db['last_num'].find({'date': today, 'server': server}, {'last_num': 1, '_id': 0})
