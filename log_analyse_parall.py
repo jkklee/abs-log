@@ -57,6 +57,7 @@ def timer(func):
 
     return inner_func
 
+
 def my_connect(db_name):
     """获得MongoClient对象,进而获得Database(MongoClient）对象
     db_name:mongodb的库名(不同站点对应不同的库名)"""
@@ -123,6 +124,7 @@ def process_line(line_str):
                 'bytes_sent': int(bytes_sent), 'request_time': float(request_time), 'user_ip': user_ip,
                 'cdn_ip': cdn_ip, 'request_method': request_method, 'request_uri': request_uri}
 
+
 def text_abstract(text, what):
     """
     对uri和args进行抽象化,利于分类
@@ -140,6 +142,7 @@ def text_abstract(text, what):
         return step2
     elif what == 'args':
         return re.sub('=[^&=]+', '=?', text)
+
 
 def insert_mongo(mongo_db_obj, results, t_name, l_name, num, date, s_name):
     """插入mongodb, 在主进程中根据函数返回值来决定是否退出对日志文件的循环，进而退出主进程
@@ -166,17 +169,15 @@ def get_prev_num(l_name):
     try:
         tmp = mongo_db['last_num'].find({'date': today, 'server': server}, {'last_num': 1, '_id': 0})
         if tmp.count() == 1:
-            for i in tmp:
-                prev_num = i['last_num']
-                return prev_num
+            return tmp.next()['last_num']
         elif tmp.count() == 0:
-            prev_num = 0
-            return prev_num
+            return 0
         else:
             print('Error:"{}"未取得已入库的行数,本次跳过\n'.format(l_name))
     except Exception as err:
         print('Error: {}'.format(err))
         print('Error:"{}"未取得已入库的行数,本次跳过\n'.format(l_name))
+
 
 @timer
 def del_old_data(t_name, l_name, n=2):
@@ -187,11 +188,12 @@ def del_old_data(t_name, l_name, n=2):
         print('{}    Error: {}'.format(l_name, err))
         print('未能删除{}天前的数据...\n'.format(n))
 
+
 @timer
 def main_loop(log_name):
     """log_name:日志文件名"""
     invalid = 0  # 无效的请求数
-    tmp_res = {}  # 存储处理过程中用于保存一分钟内的各项原始数据
+    tmp_res = {'minute_total_bytes': 0}  # 存储处理过程中用于保存一分钟内的各项原始数据
     # 下面3个变量用于生成mongodb的_id
     # 当前处理的一分钟(亦即mongodb文档_id键的一部分,初始为''),格式: 0101(1点1分).(对日志数据以分钟为粒度进行处理分析)
     this_h_m = ''
@@ -200,7 +202,7 @@ def main_loop(log_name):
                   'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'}
 
     # mongodb 中的库名
-    mongo_db_name = log_name.split('.access')[0]
+    mongo_db_name = log_name.split('.access')[0].replace('.', '')
     my_connect(mongo_db_name)
 
     # 开始处理逻辑
@@ -232,9 +234,10 @@ def main_loop(log_name):
                     # 存储一分钟区间内的最终汇总结果
                     prev_num_inner = get_prev_num(log_name)
                     this_minute_res = {
-                        '_id': server + '-' + y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char),
+                        '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server, 
                         'total_hits': i - 1 - prev_num_inner,
                         'invalid_hits': invalid,
+                        'total_bytes': tmp_res.pop('minute_total_bytes'),
                         'requests': []}
 
                     # 对tmp_res里的原始数据进行整合,插入到this_minute_res['request']中,生成最终存储到mongodb的文档(字典)
@@ -242,23 +245,27 @@ def main_loop(log_name):
                     for uri_k, uri_v in sorted(tmp_res.items(), key=lambda item: item[1]['hits'], reverse=True)[
                                         :max_uri_num]:
                         '''取点击量前max_uri_num的uri_abs'''
-                        single_uri_dict = {'uri_abs': uri_k, 'hits': uri_v['hits'],
+                        single_uri_dict = {'uri_abs': uri_k,
+                                           'hits': uri_v['hits'],
                                            'max_time': max(uri_v['time']),
                                            'min_time': min(uri_v['time']),
                                            'avg_time': format(sum(uri_v['time']) / len(uri_v['time']), '.2f'),
                                            'max_bytes': max(uri_v['bytes']),
                                            'min_bytes': min(uri_v['bytes']),
+                                           'bytes': sum(uri_v['bytes']),
                                            'avg_bytes': format(sum(uri_v['bytes']) / len(uri_v['bytes']), '.2f'),
                                            'args': []}
                         for arg_k, arg_v in sorted(uri_v['args'].items(), key=lambda item: item[1]['hits'],
                                                    reverse=True)[:max_arg_num]:
                             '''取点击量前max_arg_num的args_abs'''
-                            single_arg_dict = {'args_abs': arg_k, 'hits': arg_v['hits'],
+                            single_arg_dict = {'args_abs': arg_k,
+                                               'hits': arg_v['hits'],
                                                'max_time': max(arg_v['time']),
                                                'min_time': min(arg_v['time']),
                                                'avg_time': format(sum(arg_v['time']) / len(arg_v['time']), '.2f'),
                                                'max_bytes': max(arg_v['bytes']),
                                                'min_bytes': min(arg_v['bytes']),
+                                               'bytes': sum(arg_v['bytes']),
                                                'avg_bytes': format(sum(arg_v['bytes']) / len(arg_v['bytes']), '.2f'),
                                                'method': arg_v['method'],
                                                'example': arg_v['example']}
@@ -269,10 +276,11 @@ def main_loop(log_name):
                     if not insert_mongo(mongo_db, this_minute_res, y_m_d, log_name, i - 1, y_m_d, server):
                         break
                     # 清空临时字典tmp_res和invalid
-                    tmp_res.clear()
+                    tmp_res = {'minute_total_bytes': 0}
                     invalid = 0
                     print('{} 处理至 {}'.format(log_name, line_res['time_local']))
 
+                # 将每行的分析结果"追加"进tmp_res字典
                 uri_abs = line_res['uri_abs']
                 args_abs = line_res['args_abs']
                 if uri_abs in tmp_res:
@@ -285,6 +293,7 @@ def main_loop(log_name):
                                         'bytes': [line_res['bytes_sent']],
                                         'hits': 1,
                                         'args': {}}
+                tmp_res['minute_total_bytes'] += line_res['bytes_sent']
 
                 if args_abs in tmp_res[uri_abs]['args']:
                     '''将args数据汇总到临时字典'''
