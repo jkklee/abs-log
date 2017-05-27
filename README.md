@@ -2,20 +2,20 @@
 This tool is not a generally said log analyse/statistics solution. It aim at trouble shooting and performance optimization based on web logs
 
 
-日志分析在web系统中故障排查、性能分析方面有着非常重要的作用。目前，开源的ELK系统是成熟且功能强大的选择。但是部署及学习成本亦然不低，这里我实现了一个方法上相对简单（但准确度和效率是有保证的）的实现。另外该脚本的侧重点不是通常的PV，UV等展示，而是短期内（如两三天历史）提供细粒度的异常定位和性能分析。
+日志分析在web系统中故障排查、性能分析方面有着非常重要的作用。目前，开源的ELK系统是成熟且功能强大的选择。但是部署及学习成本亦然不低，这里我实现了一个方法和功能相对简单但有针对性的实现。另外该脚本的侧重点不是通常的PV，UV等展示，而是短期内提供细粒度（分钟级别，一分钟内的日志做抽象和汇总）的异常定位和性能分析。
 
 ### 先说一下我想实现这个功能的驱动力（痛点）吧：
 我们有不少站点，前边有CDN，原站前面是F5，走到源站的访问总量日均PV约5000w。下面是我们经常面临一些问题：
 
  - CDN回源异常，可能导致我们源站带宽和负载都面临较大的压力。这时需要能快速的定位到是多了哪些回源IP（即CDN节点）或是某个IP的回源量异常，又或是哪些url的回源量异常
  - 在排除了CDN回源问题之后，根据zabbix监控对一些异常的流量或者负载波动按异常时段对比正常时段进行分析，定位到具体的某（几）类url。反馈给开发进行review以及优化
- - 有时zabbix会监控到应用服务器和DB或者缓存服务器之间的流量异常，这种问题一般定位起来是比较麻烦的，甚至波动仅仅是在一两分钟内，这就需要对日志有一个非常精细的分析粒度
- - 我们希望能所有的应用服务器能过在本机分析日志（分布式的思想），然后将分析结果汇总到一起（**MySQL**）以便查看；并且还希望能尽可能的**实时**（将定时任务间隔设置低一些），以便发现问题后能尽快的通过此平台进行分析  
+ - 有时zabbix会监控到应用服务器和DB或者缓存服务器之间的流量异常，这种问题一般定位起来是比较麻烦的，甚至波动仅仅是在一两分钟内，这就需要对日志有一个非常细的分析粒度
+ - 我们希望能所有的应用服务器能过在本机分析日志（分布式的思想），然后将分析结果汇总到一起以便查看；并且还希望能尽可能的**实时**（将定时任务间隔设置短一些），以便发现问题后能尽快的通过此平台进行分析  
  -  **通用**和**性能**：对于不同的日志格式只需对脚本稍加改动即可分析；因为将日志分析放在应用服务器本机，所以脚本的性能和效率也要有保证，不能影响业务
 
  
 ### 实现思路：
-比较简单，就是利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`用户IP`、`CDN ip`、`server name` 等信息存储进MySQL数据库。
+比较简单，就是利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`用户IP`、`CDN ip`、`server name` 等信息存储进MongoDB。
 
 #### 当然前提规范也是必须的：
 
@@ -40,92 +40,101 @@ log_pattern_obj = re.compile(log_pattern)
 ```
 用以上正则来整体匹配一行日志记录，然后各个部分可以通过`log_pattern_obj.search(log).group('remote_addr')`、`log_pattern_obj.search(log).group('body_bytes_sent')`等形式来访问  
 
-#### 对于其他格式的nginx日志或者Apache日志，按照如上原则，并对数据库结构做相应调整，都可以轻松的使用该脚本分析处理。
+#### 对于其他格式的nginx日志或者Apache日志，按照如上原则，都可以轻松的使用该脚本分析处理。
 
 原理虽简单但实现起来却发现有好多坑，如果想靠空格或双引号来分割各段的话，主要问题是面对各种不规范的记录时(原因不一而足，而且也是样式繁多)，无法做到将各种异常都考虑在内，所以我采用了`re`模块而不是简单的`split()`函数的原因。代码里对一些“可以容忍”的异常记录通过一些判断逻辑予以处理；对于“无法容忍”的异常记录则返回空字符串并将日志记录于文件。
 
 其实对于上述的这些不规范的请求，最好的办法是在nginx中定义日志格式时，用一个特殊字符作为分隔符，例如“|”。这样都不用Python的re模块，直接字符串分割就能正确的获取到各段(性能会好些)。
 
 ### 接下来看看使用效果：
-先看一行数据库里的记录
+#### 帮助信息
 ```
-*************************** 9. row ***************************
-            id: 9
-        server: web6
-       uri_abs: /chapter/?/?.json
- uri_abs_crc32: 443227294
-      args_abs: channel=?&version=?
-args_abs_crc32: 2972340533
-    time_local: 2017-02-22 23:59:01
- response_code: 200
-    bytes_sent: 218
-  request_time: 0.028
-       user_ip: 210.78.141.185
-        cdn_ip: 27.221.112.163
-request_method: GET
-           uri: /chapter/14278/28275.json
-          args: channel=ios&version=2.0.6
-       referer:
+[ljk@demo ~]$ log_show --help
+Usage:
+  log_show <site_name> [options] [(-f <start_time>|-f <start_time> -t <end_time>)] [(-u <uri> [(--distribution|--detail)]|-r <request_uri>)]
+
+Options:
+  -h --help                       Show this screen.
+  -f --from <start_time>          Start time.Format: %y%m%d[%H[%M]], %H and %M is optional
+  -t --to <end_time>              End time.Same as --from
+  -l --limit <num>                Number of lines in the output, 0 means no limit. [default: 20]
+  -s --server <server>            Web server hostname
+  -u --uri <uri>                  URI in request, must in a pair of quotes 
+  -r --request_uri <request_uri>  Full original request URI (with arguments), must in a pair of quotes
+  -g --group_by <group_by>        Group by every minute or every ten minutes or every hour or every day
+                                  Valid values: "min", "ten_min", "hour", "day". [default: min]
+  --distribution                  Display result of -u or -r within every period which --group_by specific
+  --detail                        Display detail of args of -u or -r specific
 ```
+#### 默认对指定站点今日已入库的数据进行分析，从访问次数、字节数、响应时间三个维度打印出前20（不加-l参数）个uri_abs(经抽象处理的不含参数的uri)
+```
+[ljk@demo ~]$ log_show  -l 5 api
+====================
+Total hits: 13003013
+====================
+      hits       percent    uri_abs
+   2813039        21.63%    /subscribe/?/?/?
+   1480372        11.38%    /chapter/?/?.json
+   1445657        11.12%    /subscribe/read
+   1243056         9.56%    /recommend/update
+   1181373         9.09%    /view/?/?.json
+====================
+Total bytes: 24.16 GB
+====================
+     bytes       percent     avg_bytes    uri_abs
+   4.54 GB        18.77%       4.08 KB    /point/?/?/?.json
+   2.55 GB        10.56%       7.56 KB    /comment/?/?.json
+   2.53 GB        10.47%       9.11 KB    /center/subscribe
+   2.50 GB        10.36%       5.27 KB    /comic/?.json
+   2.25 GB         9.30%       1.59 KB    /chapter/?/?.json
+====================
+Total cum. time: 1802117s
+====================
+ cum. time       percent      avg_time    uri_abs
+   472374s        26.21%        0.647s    /comment/topcomment/?/?/?.json
+   407161s        22.59%        2.344s    /old/comment/?/?/?/?.json
+   207505s        11.51%        1.620s    /comment/?/?.json
+   154559s         8.58%        0.437s    /comment/?/?/?/?.json
+    95661s         5.31%        0.034s    /subscribe/?/?/?
+```
+#### 对执行的uri(without query strings)或request_uri(full uri)在个时间段的各项统计(时间段可按分/十分/时/天划分)
+```
+# 默认按分钟分组,默认显示20行, 通过'-l 0'参数可以显示所有结果 
+[ljk@demo ~]$ log_show  -l 5 api -u "/subscribe/?/?/?"
+====================
+uri_abs: /subscribe/?/?/?
+Total hits: 2813039    Total bytes: 107.31 MB    Avg_time: 0.034
+====================
+       min        hits  hits_percent       bytes  bytes_percent    avg_time
+1705270000        7404         0.26%   289.22 KB          0.26%      0.039s
+1705270001        7461         0.27%   291.45 KB          0.27%      0.038s
+1705270002        7333         0.26%   286.45 KB          0.26%      0.038s
+1705270003        7383         0.26%   288.40 KB          0.26%      0.035s
+1705270004        7267         0.26%   283.87 KB          0.26%      0.035s
+```
+#### 对某一uri进行详细分析，查看其不同参数(query_string)的分布汇总
+```
+[ljk@demo ~]$ log_show api -u "/subscribe/?/?/?" --detail
+====================
+uri_abs: /subscribe/?/?/?
+Total hits: 2813039    Total bytes: 107.31 MB    Avg_time: 0.034
+====================
+      hits  hits_percent       bytes  bytes_percent    avg_time  args_abs
+   2141750        76.14%    81.70 MB         76.14%      0.034s  ""
+    671289        23.86%    25.61 MB         23.86%      0.035s  channel=?
+```
+#### Note
 其中`uri_abs`和`args_abs`是对uri和args进行抽象化（抽象出一个模式出来）处理之后的结果。  
- 对uri：将其中所有的数字替换成"?"  
+ 对uri：将路径中任意一段全部由数字组成的抽象为一个"?"；将文件名出去后缀部分全部由数字组成的部分抽象为一个"?"  
  对args：将所有的value替换成"？"  
-`uri_abs_crc32`和`args_abs_crc32`两列是对抽象化结果进行crc32计算，这两列单纯只是为了在MySQL中对uri或args进行分类统计汇总时得到更好的性能。
-  
-现在还没有完成统一分析的入口脚本，所以还是以sql语句的形式来查询（对用户的sql功底有要求，不友好待改善）
 
-#### 查询示例
 
- - 查询某站点日/小时pv（其实这一套东西的关注点并不在类似的基础的统计上）
-```
-select count(*) from www where time_local>='2016-12-09 00:00:00' and time_local<='2016-12-09 23:59:59'
-```
- - 查询某类型url总量(or指定时间段内该url总量)
-依据表中的url_abs_crc32字段
-```
-mysql> select count(*) from www where uri_abs_crc32=2043925204 and time_local > '2016-11-23 10:00:00' and time_local <'2016-11-23 23:59:59';
-```
- - 平均响应时间排行（可基于总量分析；亦可根据时段对比分析）
-```
-mysql> select uri_abs,count(*) as num,sum(request_time) as total_time,sum(request_time)/count(*) as average_time from www group by uri_abs_crc32 order by num desc limit 5;
-+------------------------------------------+---------+------------+--------------+
-| uri_abs                                  | num     | total_time | average_time |
-+------------------------------------------+---------+------------+--------------+
-| /comicsum/comicshot.php                  | 2700716 |   1348.941 |    0.0004995 |
-| /category/?.html                         |  284788 | 244809.877 |    0.8596215 |
-| /                                        |   72429 |   1172.113 |    0.0161829 |
-| /static/hits/?.json                      |   27451 |      7.658 |    0.0002790 |
-| /dynamic/o_search/searchKeyword          |   26230 |   3757.661 |    0.1432581 |
-+------------------------------------------+---------+------------+--------------+
-10 rows in set (40.09 sec)
-```
-- 平均响应大小排行
-```
-mysql> select uri_abs,count(*) as num,sum(bytes_sent) as total_bytes,sum(bytes_sent)/count(*) as average_bytes from www group by uri_abs_crc32 order by num desc,average_bytes desc limit 10;    
-+------------------------------------------+---------+-------------+---------------+
-| uri_abs                                  | num     | total_bytes | average_bytes |
-+------------------------------------------+---------+-------------+---------------+
-| /comicsum/comicshot.php                  | 2700716 |    72889752 |       26.9890 |
-| /category/?.html                         |  284788 |  3232744794 |    11351.4080 |
-| /                                        |   72429 |  1904692759 |    26297.3776 |
-| /static/hits/?.json                      |   27451 |     5160560 |      187.9917 |
-| /dynamic/o_search/searchKeyword          |   26230 |     3639846 |      138.7665 |
-+------------------------------------------+---------+-------------+---------------+
-```
-以上只列举了几个例子，基本上除了UA部分（代码中已有捕捉，但是笔者用不到），其他的信息都以包含到表中。因此几乎可以对网站`流量`，`负载`,`响应时间`等方面的任何疑问给出数据上的支持。
+以上只列举了几个例子，还支持指定时间段内的查询分析。
+基本上除了UA部分（代码中已有捕捉，但是笔者用不到），其他的信息都以包含到表中。因此几乎可以对网站`流量`，`负载`,`响应时间`等方面的任何疑问给出数据上的支持。
 
-### 注意事项：
-Python外部包依赖：pymysql  
-MySQL（笔者5.6版本）将`innodb_file_format`设置为`Barracuda`（这个设置并不对其他库表产生影响，即使生产数据库设置也无妨）,以便在建表语句中可以通过`ROW_FORMAT=COMPRESSED`将innodb表这只为压缩模式，笔者实验开启压缩模式后，数据文件大小将近减小50%。
 
 ### 使用说明：
-该脚本的设计目标是将其放到web server的的计划任务里，定时（例如每10分钟/30分钟，自定义）执行，在需要时通过MySQL进行需要的分析即可。  
+该脚本的设计目标是将其放到web server的的计划任务里，定时（例如每30分钟或10分钟，自定义）执行，在需要时通过log_show进行需要的分析即可。  
 `*/30 * * * * export LANG=zh_CN.UTF-8;python3 /root/log_analyse_parall.py &> /tmp/log_analyse.log`
 
-### 性能测试：
-现在的版本，进过分析的数据最终存储到MySQL中，所以脚本执行过程中向MySQL的插入语句耗费了绝大多数执行时间，在笔者的4核4G的虚拟机上，以20w的真实日志数据进行单进程测试，结果如下
-```
-有入库    22.40s
-无入库    4.56s
-```
-差别非常大，这也是笔者下一步打算更换MySQL存储的驱动力（例如MongoDB）
+
