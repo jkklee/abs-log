@@ -43,6 +43,8 @@ mongo_port = 27017
 max_uri_num = 200
 max_arg_num = 30
 
+# 保存几天的数据(每天一个集合)
+limit = 7
 # ---------- 自定义部分结束 ----------#
 
 
@@ -182,14 +184,16 @@ def get_prev_num(l_name):
         print('Error:"{}"未取得已入库的行数,本次跳过\n'.format(l_name))
 
 
-@timer
-def del_old_data(t_name, l_name, n=10):
-    """删除n天前的数据,n默认为10"""
+def del_old_data(l_name):
+    """删除n天前的数据,n默认为7(limit变量)"""
+    col_name = mongo_db.collection_names()
+    del_col = col_name[8:] if len(col_name) > 8 else []
     try:
-        pass
-    except pymysql.err.MySQLError as err:
+        for i in del_col:
+            mongo_db.drop_collection(i)
+    except Exception as err:
         print('{}    Error: {}'.format(l_name, err))
-        print('未能删除{}天前的数据...\n'.format(n))
+        print('未能删除{}天前的数据...\n'.format(limit))
 
 
 @timer
@@ -267,6 +271,7 @@ def main_loop(log_name):
                                                'hits': arg_v['hits'],
                                                'max_time': max(arg_v['time']),
                                                'min_time': min(arg_v['time']),
+                                               'time': sum(arg_v['time']),
                                                'avg_time': float(format(sum(arg_v['time']) / len(arg_v['time']), '.2f')),
                                                'max_bytes': max(arg_v['bytes']),
                                                'min_bytes': min(arg_v['bytes']),
@@ -320,7 +325,7 @@ def main_loop(log_name):
                 if y_m_d != today:
                     print('日志不是今天的,将退出')
                     break
-                    # del_old_data(table_name, log_name)
+        del_old_data(log_name)
 
 if __name__ == "__main__":
     # global server, today
