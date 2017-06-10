@@ -24,7 +24,7 @@ import re
 from sys import exit
 from docopt import docopt
 from functools import wraps
-
+from copy import deepcopy
 
 arguments = docopt(__doc__)
 # print(arguments)
@@ -33,14 +33,15 @@ if arguments['--group_by'] not in ('min', 'ten_min', 'hour', 'day'):
     print("  Warning: --group_by must be one of 'min', 'ten_min', 'hour', 'day'")
     exit(10)
 
-today = time.strftime('%y%m%d', time.localtime())  # 今天日期
-mongo_client = pymongo.MongoClient('192.168.1.21')
+today = time.strftime('%y%m%d', time.localtime())  # 今天日期,取两位年份
+mongo_client = pymongo.MongoClient('192.168.1.2')
 mongo_db = mongo_client[arguments['<site_name>']]
 # mongodb中每天一个集合, 选定要查询的集合
 mongo_col = mongo_db[arguments['--from'][:6]] if arguments['--from'] else mongo_db[today]
 
 
 def timer(func):
+    """测量函数执行时间的装饰器"""
     @wraps(func)
     def inner_func(*args, **kwargs):
         t0 = time.time()
@@ -123,53 +124,41 @@ def base_summary(what, limit):
         print('  Warning: there is no record in the condition you specified')
         exit(11)
     # pymongo.command_cursor.CommandCursor 对象无法保留结果中的顺序，故而mongodb pipeline中就不需要调用$sort排序
-    # time1 = time.time()
     total_uri = mongo_col.aggregate(pipeline1)
-    # time2 = time.time()
-    # print('pipeline1 {}'.format(time2 - time1))
     # 这一步来对pymongo.command_cursor.CommandCursor中的每一行进行排序，并存进list对象
     total_uri = sorted(total_uri, key=lambda x: x[what], reverse=True)
+    if what == 'hits':
+        global total_hits  # 为了给bytes和time维度求每个uri均值使用
+        total_hits = deepcopy(total_uri)
     if int(limit):
         total_uri = total_uri[:int(limit)]
     if what == 'hits':
         print('{0}\nTotal {1}: {2}\n{0}'.format('=' * 20, what, collection_total))
-        print('{}    {}    {}'.format('hits'.center(10), 'percent', 'uri_abs'.center(10)))
+        print('{}    {}    {}'.format('hits'.rjust(10), 'percent'.rjust(10), 'uri_abs'))
     elif what == 'bytes':
         print('{0}\nTotal {1}: {2}\n{0}'.format('='*20, what, get_human_size(collection_total)))
-        print('{}    {}    {}    {}'.format('bytes'.center(10), 'percent', 'avg_bytes'.center(10), 'uri_abs'.center(10)))
+        print('{}    {}    {}    {}'.format('bytes'.rjust(10), 'percent'.rjust(10), 'avg_bytes'.rjust(10), 'uri_abs'))
     elif what == 'time':
         print('{0}\nTotal cum. {1}: {2}s\n{0}'.format('=' * 20, what, format(collection_total, '.0f')))
-        print('{}    {}    {}    {}'.format('cum. time'.center(10), 'percent', 'avg_time'.center(10), 'uri_abs'.center(10)))
+        print('{}    {}    {}    {}'.format('cum. time'.rjust(10), 'percent'.rjust(10), 'avg_time'.rjust(10), 'uri_abs'))
     for one_doc in total_uri:
         uri = one_doc['_id']
         value = one_doc[what]
         if what != 'hits':
             '''bytes和time要计算平均值'''
-            additional_condition['$match']['$and'].append({'requests.uri_abs': uri})
-            # 取得当前uri_abs的bytes或者time的均值
-            # time1 = time.time()
-            this_uri_avg = mongo_col.aggregate([{'$project': {'requests.uri_abs': 1, 'requests.avg_'+what: 1}},
-                                                {'$project': {'requests': {'$filter': {
-                                                    'input': '$requests',
-                                                    'as': 'request',
-                                                    'cond': {'$eq': [uri, '$$request.uri_abs']}}}}},
-                                                {'$unwind': '$requests'},
-                                                additional_condition,
-                                                {'$group': {'_id': 'null', 'avg': {'$avg': '$requests.avg_'+what}}}]
-                                               ).next()['avg']
-            # time2 = time.time()
-            # print('均值 {}'.format(time2 - time1))
-            additional_condition['$match']['$and'].pop()
+            for pair in total_hits:
+                if pair['_id'] == uri:
+                    hits = pair['hits']
         if what == 'hits':
-            print('{}    {}%    {}'.format(str(value).rjust(8), format(value / collection_total * 100, '.2f').rjust(5), uri))
+            print('{}   {}%    {}'.format(str(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(10), uri))
         elif what == 'bytes':
-            print('{}    {}%    {}    {}'.format(
-                get_human_size(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(5),
-                get_human_size(this_uri_avg).rjust(10), uri))
+            print('{}   {}%    {}    {}'.format(
+                get_human_size(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(10),
+                get_human_size(value / hits).rjust(10), uri))
         elif what == 'time':
-            print('{}s    {}%    {}s    {}'.format(
-                format(value, '.0f').rjust(9), format(value / collection_total * 100, '.2f').rjust(5),
-                format(this_uri_avg, '.2f').rjust(8), uri))
+            print('{}s   {}%   {}s    {}'.format(format(value, '.0f').rjust(9),
+                                                 format(value / collection_total * 100, '.2f').rjust(10),
+                                                 format(value / hits, '.3f').rjust(10), uri))
 
 
 def text_abstract(text, what):
@@ -263,12 +252,12 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
     elif uri_type == 'request_uri':
         print('{}\nrequest_uri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs'] + ' + ' + uri_args_dict['args_abs']))  # 表头
     print('Total hits: {}    Total bytes: {}    Avg_time: {}\n{}'
-          ''.format(total_hits, get_human_size(total_bytes), format(total_time/total_hits, '.2f'), '=' * 20))
+          ''.format(total_hits, get_human_size(total_bytes), format(total_time/total_hits, '.3f'), '=' * 20))
     if not how or how == 'distribution':
-        print('{}  {}  {}  {}  {}  {}'.format((group_by if group_by else 'min').center(10),
-                                              'hits'.center(10), 'hits percent'.center(10),
-                                              'bytes'.center(10), 'bytes percent'.center(10),
-                                              'avg_time'.center(10)))
+        print('{}  {}  {}  {}  {}  {}'.format((group_by if group_by else 'min').rjust(10),
+                                              'hits'.rjust(10), 'hits_percent'.rjust(10),
+                                              'bytes'.rjust(10), 'bytes_percent'.rjust(10),
+                                              'avg_time'.rjust(10)))
         # 修改aggregate操作 $group字段
         pipeline_hits[-1]['$group']['_id'] = group_id
         pipeline_bytes[-1]['$group']['_id'] = group_id
@@ -281,8 +270,6 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
         result_time = mongo_col.aggregate(pipeline_time)
         if int(limit):
             result_hits = result_hits[:int(limit)]
-            # result_bytes = result_bytes[:int(limit)]
-            # result_time = result_time[:int(limit)]
 
         result_bytes_dict = {}
         result_time_dict = {}
@@ -295,16 +282,16 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
             date = one_doc['_id']
             hits = one_doc['hits']
             # print('date: {}    result_time_dict[date]: {}'.format(date, result_time_dict[date]))  # debug
-            print('{}  {}  {}%    {}{}%  {}s'.format(date.ljust(10), str(hits).rjust(8),
-                                                     format(hits / total_hits * 100, '.2f').rjust(10),
+            print('{}  {}  {}%  {}  {}%  {}s'.format(date.rjust(10), str(hits).rjust(10),
+                                                     format(hits / total_hits * 100, '.2f').rjust(11),
                                                      get_human_size(result_bytes_dict[date]).rjust(10),
-                                                     format(result_bytes_dict[date] / total_bytes * 100, '.2f').rjust(10),
-                                                     format(result_time_dict[date] / hits, '.2f').rjust(10)))
+                                                     format(result_bytes_dict[date] / total_bytes * 100, '.2f').rjust(12),
+                                                     format(result_time_dict[date] / hits, '.3f').rjust(9)))
     else:
         '''显示指定uri的args点击情况,即--detail'''
-        print('{}  {}  {}  {}  {}  args_abs'.format('hits'.center(10), 'hits percent'.center(10),
-                                                    'bytes'.center(10), 'bytes percent'.center(10),
-                                                    'avg_time'.center(10)))
+        print('{}  {}  {}  {}  {}  args_abs'.format('hits'.rjust(10), 'hits_percent'.rjust(10),
+                                                    'bytes'.rjust(10), 'bytes_percent'.rjust(10),
+                                                    'avg_time'.rjust(10)))
         pipeline_hits.insert(1, {'$unwind': '$requests.args'})
         pipeline_hits[-1]['$group']['_id'] = '$requests.args.args_abs'
         pipeline_hits[-1]['$group']['hits']['$sum'] = '$requests.args.hits'
@@ -335,12 +322,13 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
         for one_doc in result_hits:
             args = one_doc['_id']
             hits = one_doc['hits']
-            print('{}  {}%    {}  {}%  {}s    {}'.format(str(hits).rjust(8),
-                                                         format(hits / total_hits * 100, '.2f').rjust(10),
-                                                         get_human_size(result_bytes_dict[args]).rjust(10),
-                                                         format(result_bytes_dict[args] / total_bytes * 100, '.2f').rjust(10),
-                                                         format(result_time_dict[args] / hits, '.2f').rjust(10),
-                                                         args if args != '' else '""'))
+            print('{}  {}%  {}  {}%  {}s  {}'.format(str(hits).rjust(10),
+                                                     format(hits / total_hits * 100, '.2f').rjust(11),
+                                                     get_human_size(result_bytes_dict[args]).rjust(10),
+                                                     format(result_bytes_dict[args] / total_bytes * 100, '.2f').rjust(12),
+                                                     format(result_time_dict[args] / hits, '.3f').rjust(9),
+                                                     args if args != '' else '""'))
+
 
 # 根据参数执行动作
 if arguments['--uri'] and not arguments['--detail']:
@@ -354,3 +342,4 @@ else:
     # print('=' * 20)
     base_summary('bytes', arguments['--limit'])
     base_summary('time', arguments['--limit'])
+
