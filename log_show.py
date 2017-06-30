@@ -21,7 +21,7 @@ Options:
 import pymongo
 import time
 import re
-from sys import exit
+from sys import exit, argv
 from docopt import docopt
 from functools import wraps
 from copy import deepcopy
@@ -189,8 +189,8 @@ def specific_base_pipeline(what, uri_type, text):
     # 定义一个mongodb aggregate操作pipeline的模板
     pipeline = [{'$unwind': '$requests'}, {'$group': {'_id': 'null', what: {'$sum': ''}}}]
     # 根据uri或request_uri决定mongodb aggregate操作的$match条件
-    if uri_type == 'uri':
-        uri_abs = text_abstract(text, 'uri')
+    if uri_type == 'uri' or uri_type is None:
+        uri_abs = text_abstract(text, 'uri') if text is not None else None
         args_abs = None
         additional_condition = base_condition(
             arguments['--server'], arguments['--from'], arguments['--to'], uri_abs, None)
@@ -247,6 +247,8 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
         exit(13)
 
     uri_args_dict = specific_base_pipeline('hits', uri_type, text)  # 为了获取uri_abs和args_abs
+    if uri_type is None:
+        print('=' * 20)  # 表头
     if uri_type == 'uri':
         print('{}\nuri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs']))  # 表头
     elif uri_type == 'request_uri':
@@ -337,9 +339,9 @@ elif arguments['--uri'] and arguments['--detail']:
     specific_uri_summary('uri', 'detail', arguments['--uri'], arguments['--group_by'], arguments['--limit'])
 elif arguments['--request_uri']:
     specific_uri_summary('request_uri', None, arguments['--request_uri'], arguments['--group_by'], arguments['--limit'])
+elif '-g' in argv or '--group_by' in argv:
+    specific_uri_summary(None, 'distribution', None, arguments['--group_by'], arguments['--limit'])
 else:
     base_summary('hits', arguments['--limit'])
-    # print('=' * 20)
     base_summary('bytes', arguments['--limit'])
     base_summary('time', arguments['--limit'])
-
