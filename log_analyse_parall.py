@@ -44,7 +44,7 @@ max_uri_num = 200
 max_arg_num = 30
 
 # 保存几天的数据(每天一个集合)
-limit = 7
+limit = 10
 # ---------- 自定义部分结束 ----------#
 
 
@@ -187,7 +187,7 @@ def get_prev_num(l_name):
 def del_old_data(l_name):
     """删除n天前的数据,n默认为7(limit变量)"""
     col_name = mongo_db.collection_names()
-    del_col = col_name[8:] if len(col_name) > 8 else []
+    del_col = sorted(col_name, reverse=True)[8:] if len(col_name) > 8 else []
     try:
         for i in del_col:
             mongo_db.drop_collection(i)
