@@ -2,7 +2,7 @@
 # coding:utf-8
 """
 Usage:
-  log_show <site_name> [options] [(-f <start_time>|-f <start_time> -t <end_time>)] [(-u <uri> [(--distribution|--detail)]|-r <request_uri>)]
+  log_show <site_name> [options] [-f <start_time> [-t <end_time>]] [(-u <uri> [(--distribution|--detail)]|-r <request_uri>)]
 
 Options:
   -h --help                       Show this screen.
