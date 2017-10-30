@@ -48,7 +48,7 @@ log_pattern_obj = re.compile(log_pattern)
 
 ### 接下来看看使用效果：
 #### 帮助信息
-```shell
+```bash
 [ljk@demo ~]$ log_show --help
 Usage:
   log_show <site_name> [options] [(-f <start_time>|-f <start_time> -t <end_time>)] [(-u <uri> [(--distribution|--detail)]|-r <request_uri>)]
