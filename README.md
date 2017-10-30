@@ -48,7 +48,7 @@ log_pattern_obj = re.compile(log_pattern)
 
 ### 接下来看看使用效果：
 #### 帮助信息
-```
+```shell
 [ljk@demo ~]$ log_show --help
 Usage:
   log_show <site_name> [options] [(-f <start_time>|-f <start_time> -t <end_time>)] [(-u <uri> [(--distribution|--detail)]|-r <request_uri>)]
@@ -67,7 +67,7 @@ Options:
   --detail                        Display detail of args of -u or -r specific
 ```
 #### 默认对指定站点今日已入库的数据进行分析，从访问次数、字节数、响应时间三个维度打印出前20（不加-l参数）个uri_abs(经抽象处理的不含参数的uri)
-```
+```shell
 [ljk@demo ~]$ log_show  -l 5 api
 ====================
 Total hits: 13003013
@@ -98,7 +98,7 @@ Total cum. time: 1802117s
     95661s         5.31%        0.034s    /subscribe/?/?/?
 ```
 #### 指定时间段内按“分/十分/时/天”为粒度进行统计
-```
+```shell
 # 默认按分钟分组,默认显示20行, 通过'--limit 0'参数可以显示所有结果。
 # 下面示例展示170630-00时到170630-01时内以每十分钟为粒度的统计
 [ljk@demo ~]$ log_show api  -g ten_min  -f 17063000 -t 17063001
@@ -114,7 +114,7 @@ Total hits: 229277    Total bytes: 201.35 MB    Avg_time: 0.015
  170630005       34000        14.83%    29.57 MB         14.68%      0.013s
 ```
 #### 对指定的uri(without query strings)或request_uri(full uri)在各时间段的各项统计(时间段可按分/十分/时/天划分)
-```
+```shell
 # 默认按分钟分组,默认显示20行, 通过'-l 0'参数可以显示所有结果 
 [ljk@demo ~]$ log_show  -l 5 api -u "/subscribe/?/?/?"
 ====================
@@ -129,7 +129,7 @@ Total hits: 2813039    Total bytes: 107.31 MB    Avg_time: 0.034
 1705270004        7267         0.26%   283.87 KB          0.26%      0.035s
 ```
 #### 对某一uri进行详细分析，查看其不同参数(query_string)的分布汇总
-```
+```shell
 [ljk@demo ~]$ log_show api -u "/subscribe/?/?/?" --detail
 ====================
 uri_abs: /subscribe/?/?/?
