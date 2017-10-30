@@ -1,5 +1,5 @@
 # web_log_analyse
-This tool is not a generally said log analyse/statistics solution. It aim at trouble shooting and performance optimization based on web logs
+This tool aim at trouble shooting and performance optimization based on web logs, it's not a generally said log analyse/statistics solution. It preprocess logs on all web server at a specified period and save the results into mongodb for finally use(with log_show.py)
 
 
 日志分析在web系统中故障排查、性能分析方面有着非常重要的作用。目前，开源的ELK系统是成熟且功能强大的选择。但是部署及学习成本亦然不低，这里我实现了一个方法和功能相对简单但有针对性的实现。另外该脚本的侧重点不是通常的PV，UV等展示，而是短期内提供细粒度（分钟级别，一分钟内的日志做抽象和汇总）的异常定位和性能分析。
@@ -15,7 +15,7 @@ This tool is not a generally said log analyse/statistics solution. It aim at tro
 
  
 ### 实现思路：
-比较简单，就是利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`用户IP`、`CDN ip`、`server name` 等信息存储进MongoDB。
+利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`用户IP`、`CDN ip`、`server name` 等信息存储进MongoDB。这里实现的另一个思想是：“谁的日志谁处理（增量处理）”，将处理结果统一存到一个数据库；查看脚本（`log_show.py`）和数据库在一起，达到在一个入口即可对所有web server的日志进行分析查看的效果，并且达到准实时效果（取决于web server上`log_analyse_parall.py`脚本的执行频率）
 
 #### 当然前提规范也是必须的：
 
