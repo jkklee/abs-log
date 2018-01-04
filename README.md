@@ -113,7 +113,7 @@ Total hits: 229277    Total bytes: 201.35 MB    Avg_time: 0.015
  170630004       34466        15.03%    32.37 MB         16.08%      0.013s
  170630005       34000        14.83%    29.57 MB         14.68%      0.013s
 ```
-#### 对指定的uri(without query strings)或request_uri(full uri)在各时间段的各项统计(时间段可按分/十分/时/天划分)
+#### 对指定的uri(without query strings)或request_uri(full uri)在各时间段的各项统计(时间段可按"分/十分/时/天"划分)
 ```
 # 默认按分钟分组,默认显示20行, 通过'-l 0'参数可以显示所有结果 
 [ljk@demo ~]$ log_show  -l 5 api -u "/subscribe/?/?/?"
