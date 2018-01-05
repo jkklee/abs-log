@@ -334,10 +334,12 @@ if __name__ == "__main__":
     log_pattern_obj = re.compile(log_pattern)
     request_uri_pattern_obj = re.compile(request_uri_pattern)
 
-    # 检测如果当前已经有该脚本在运行,则退出
-    if_run = subprocess.run('ps -ef|grep {}|grep -v grep|grep -v "/bin/sh"|wc -l'.format(argv[0]), shell=True,
-                            stdout=subprocess.PIPE).stdout
-    if if_run.decode().strip('\n') == '1':
+    with open('/tmp/test_singleton', 'wb') as f:
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            exit(11)
+        # 以上5行为实现单例模式
         os.chdir(log_dir)
         logs_list = [i for i in os.listdir(log_dir) if
                      'access' in i and os.path.isfile(i) and i.split('.access')[0] in todo]
