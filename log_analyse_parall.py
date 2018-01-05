@@ -20,11 +20,11 @@ from random import choice
 
 # ---------- 自定义部分 ----------#
 # -----日志格式
-# 利用非贪婪匹配和分组匹配，需要严格参照日志定义中的分隔符和引号
+# 利用非贪婪匹配和分组匹配, 需要严格参照日志定义中的分隔符和引号
 log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?) \+0800\] "(?P<request>.*?)"' \
               r' (?P<status>.*?) (?P<body_bytes_sent>.*?) (?P<request_time>.*?)' \
               r' "(?P<http_referer>.*?)" "(?P<http_user_agent>.*?)" - (?P<http_x_forwarded_for>.*)$'
-# request的正则，其实是由 "request_method request_uri server_protocol"三部分组成
+# request的正则, 其实是由 "request_method request_uri server_protocol"三部分组成
 request_uri_pattern = r'^(?P<request_method>(GET|POST|HEAD|DELETE|PUT|OPTIONS)?) ' \
                       r'(?P<request_uri>.*?) ' \
                       r'(?P<server_protocol>.*)$'
@@ -35,14 +35,14 @@ log_dir = '/data/nginx_log/'
 todo = ['www', 'm', 'user']
 exclude_ip = []
 
-# -----mongo连接
+# -----mongodb连接
 mongo_host = '172.16.2.24'
 mongo_port = 27017
 # mongodb存储结构为每个站点对应一个库, 每天对应一个集合, 日志文件每分钟的数据分析合并后放到一个文档里(分析粒度达到分钟级)
 
-# -----结果入库及存储
-max_uri_num = 200
-max_arg_num = 30
+# -----以分钟为粒度统计结果中, 只取点击数前MAX_URI_NUM的uri, 每个uri中点击数前MAX_ARG_NUM的args 进行入库
+MAX_URI_NUM = 200
+MAX_ARG_NUM = 20
 
 # 保存几天的数据(每天一个集合)
 LIMIT = 10
@@ -84,7 +84,7 @@ def process_line(line_str):
         logger.warning("Can't process this line: {}".format(line_str))
         return
     else:
-        # remote_addr (客户若不经过代理，则可认为用户的真实ip)
+        # remote_addr (客户若不经过代理,则可认为用户的真实ip)
         remote_addr = processed.group('remote_addr')
         time_local = processed.group('time_local')
 
@@ -105,22 +105,22 @@ def process_line(line_str):
             logger.warning('$request abnormal: {}'.format(line_str))
             return
 
-        # 状态码,字节数,响应时间
+        # 状态码, 字节数, 响应时间
         response_code = processed.group('status')
         bytes_sent = processed.group('body_bytes_sent')
         request_time = processed.group('request_time')
 
-        # user_ip,cdn最后节点ip,以及是否经过F5
+        # user_ip, cdn最后节点ip, 以及是否经过F5
         http_x_forwarded_for = processed.group('http_x_forwarded_for')
         ips = http_x_forwarded_for.split()
         # user_ip：用户真实ip
-        # cdn_ip: CDN最后节点的ip，''表示没经过CDN；'-'表示没经过CDN和F5
+        # cdn_ip: CDN最后节点的ip, ''表示没经过CDN; '-'表示没经过CDN和F5
         if http_x_forwarded_for == '-':
             '''没经过CDN和F5'''
             user_ip = remote_addr
             cdn_ip = '-'
         elif ips[0] == remote_addr:
-            '''没经过CDN，经过F5'''
+            '''没经过CDN,经过F5'''
             user_ip = remote_addr
             cdn_ip = ''
         else:
@@ -153,7 +153,7 @@ def text_abstract(text, what):
 
 
 def insert_mongo(mongo_db_obj, results, t_name, l_name, num, date, s_name):
-    """插入mongodb, 在主进程中根据函数返回值来决定是否退出对日志文件的循环，进而退出主进程
+    """插入mongodb, 在主进程中根据函数返回值来决定是否退出对日志文件的循环, 进而退出主进程
     results: mongodb文档
     t_name: 集合名称
     l_name: 日志名称
@@ -190,9 +190,9 @@ def get_prev_num(l_name):
 
 
 def del_old_data(l_name):
-    """删除N天前的数据,默认为LIMIT"""
+    """删除N天前的数据, 默认为LIMIT"""
     col_name = mongo_db.collection_names()
-    del_col = sorted(col_name, reverse=True)[LIMIT-1:] if len(col_name) > LIMIT else []
+    del_col = sorted(col_name, reverse=True)[LIMIT:] if len(col_name) > LIMIT else []
     try:
         for col in del_col:
             mongo_db.drop_collection(col)
@@ -222,7 +222,7 @@ def main_loop(log_name):
     prev_num_outer = get_prev_num(log_name)
     if not prev_num_outer:
         return
-    # 根据当前行数和mongodb中记录的last_num对比,决定本次要处理的行数范围
+    # 根据当前行数和mongodb中记录的last_num对比, 决定本次要处理的行数范围
     n = 0
     with open(log_name) as fp:
         for line in fp:
@@ -239,23 +239,23 @@ def main_loop(log_name):
             date_time = line_res['time_local'].split(':')
             hour = date_time[1]
             minute = date_time[2]
+
+            # 分钟粒度交替时: 从临时字典中汇总上一分钟的结果并将其入库
             if this_h_m != '' and this_h_m != hour + minute:
-                '''分钟粒度交替时: 从临时字典中汇总上一分钟的结果并将其入库'''
                 # 存储一分钟区间内的最终汇总结果
                 prev_num_inner = get_prev_num(log_name)
                 this_minute_res = {
                     '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
-                    'total_hits': i - 1 - prev_num_inner,
+                    'total_hits': n - 1 - prev_num_inner,
                     'invalid_hits': invalid,
                     'total_bytes': tmp_res.pop('minute_total_bytes'),
                     'total_time': tmp_res.pop('minute_total_time'),
                     'requests': []}
 
-                # 对tmp_res里的原始数据进行整合,插入到this_minute_res['request']中,生成最终存储到mongodb的文档(字典)
+                # 对tmp_res里的原始数据进行整合,插入到this_minute_res['request']中, 生成最终存储到mongodb的文档(字典)
                 # 最终一个uri_abs在this_minute_res中对应的格式如下
-                for uri_k, uri_v in sorted(tmp_res.items(), key=lambda item: item[1]['hits'], reverse=True)[
-                                    :max_uri_num]:
-                    '''取点击量前max_uri_num的uri_abs'''
+                for uri_k, uri_v in sorted(tmp_res.items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_URI_NUM]:
+                    '''取点击量前MAX_URI_NUM的uri_abs'''
                     single_uri_dict = {'uri_abs': uri_k,
                                        'hits': uri_v['hits'],
                                        'max_time': max(uri_v['time']),
@@ -267,9 +267,8 @@ def main_loop(log_name):
                                        'bytes': sum(uri_v['bytes']),
                                        'avg_bytes': float(format(sum(uri_v['bytes']) / len(uri_v['bytes']), '.2f')),
                                        'args': []}
-                    for arg_k, arg_v in sorted(uri_v['args'].items(), key=lambda item: item[1]['hits'],
-                                               reverse=True)[:max_arg_num]:
-                        '''取点击量前max_arg_num的args_abs'''
+                    for arg_k, arg_v in sorted(uri_v['args'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_ARG_NUM]:
+                        '''取点击量前MAX_ARG_NUM的args_abs'''
                         single_arg_dict = {'args_abs': arg_k,
                                            'hits': arg_v['hits'],
                                            'max_time': max(arg_v['time']),
@@ -285,7 +284,7 @@ def main_loop(log_name):
                         single_uri_dict['args'].append(single_arg_dict)
                     this_minute_res['requests'].append(single_uri_dict)
                 # 执行插入操作(每分钟的最终结果)
-                if not insert_mongo(mongo_db, this_minute_res, y_m_d, log_name, i - 1, y_m_d, server):
+                if not insert_mongo(mongo_db, this_minute_res, y_m_d, log_name, n-1, y_m_d, server):
                     break
                 # 清空临时字典tmp_res和invalid
                 tmp_res = {'minute_total_bytes': 0, 'minute_total_time': 0}
@@ -326,13 +325,12 @@ def main_loop(log_name):
             y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]  # 作为mongodb库里的集合的名称(每天一个集合)
             this_h_m = hour + minute
             if y_m_d != today:
-                logger.error("Not today's log, exit")
+                logger.error("{}: not today's log, exit".format(log_name))
                 break
     del_old_data(log_name)
 
 
 if __name__ == "__main__":
-    # global server, today
     server = gethostname()  # 主机名
     today = time.strftime('%y%m%d', time.localtime())  # 今天日期
     log_pattern_obj = re.compile(log_pattern)
