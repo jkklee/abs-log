@@ -8,10 +8,11 @@ Collect nginx access log, process it and insert the result into mysql.
 import os
 import re
 import time
+import fcntl
 import logging
 import pymongo
 import subprocess
-from sys import argv, exit
+from sys import exit
 from socket import gethostname
 from urllib.parse import unquote
 from multiprocessing import Pool
@@ -31,7 +32,7 @@ request_uri_pattern = r'^(?P<request_method>(GET|POST|HEAD|DELETE|PUT|OPTIONS)?)
 
 # -----日志相关
 log_dir = '/data/nginx_log/'
-# 要处理的站点（可随需要向list中添加）
+# 要处理的站点(按需添加)
 todo = ['www', 'm', 'user']
 exclude_ip = []
 
@@ -148,7 +149,7 @@ def text_abstract(text, what):
         while re.search(r'/[0-9]+/', step2):
             step2 = re.sub(r'/[0-9]+/', r'/?/', step2)
         return step2
-    elif what == 'args':
+    if what == 'args':
         return re.sub('=[^&=]+', '=?', text)
 
 
@@ -184,9 +185,9 @@ def get_prev_num(l_name):
         elif tmp.count() == 0:
             return 0
         else:
-            logger.error("{}: there are more than one 'last_num' record of {} at {}, will skip this time. Please check!".format(l_name, server, today))
+            logger.error("{}: more than one 'last_num' record of {} at {}, skip".format(l_name, server, today))
     except Exception as err:
-        logger.error("{}: can't get 'last_num' of {} at {}, will skip this time. Error: {}".format(l_name, server, today, err))
+        logger.error("{}: get 'last_num' of {} at {} error, skip: {}".format(l_name, server, today, err))
 
 
 def del_old_data(l_name):
@@ -197,7 +198,7 @@ def del_old_data(l_name):
         for col in del_col:
             mongo_db.drop_collection(col)
     except Exception as err:
-        logger.error("{}: can't delete collections before {} days. Error: {}".format(l_name, LIMIT, err))
+        logger.error("{}: delete collections before {} days error: {}".format(l_name, LIMIT, err))
 
 
 def main_loop(log_name):
@@ -220,7 +221,7 @@ def main_loop(log_name):
     cur_num = int(subprocess.run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=subprocess.PIPE, universal_newlines=True).stdout.split()[0])
     # 上一次处理到的行数
     prev_num_outer = get_prev_num(log_name)
-    if not prev_num_outer:
+    if prev_num_outer is None:
         return
     # 根据当前行数和mongodb中记录的last_num对比, 决定本次要处理的行数范围
     n = 0
@@ -254,6 +255,9 @@ def main_loop(log_name):
 
                 # 对tmp_res里的原始数据进行整合,插入到this_minute_res['request']中, 生成最终存储到mongodb的文档(字典)
                 # 最终一个uri_abs在this_minute_res中对应的格式如下
+                if len(tmp_res) > MAX_URI_NUM:
+                    logger.warning("{}: truncate uri_abs reverse sorted by 'hits' from {} to {} at {} due to the "
+                                   "MAX_URI_NUM setting".format(log_name, len(tmp_res), MAX_URI_NUM, this_h_m))
                 for uri_k, uri_v in sorted(tmp_res.items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_URI_NUM]:
                     '''取点击量前MAX_URI_NUM的uri_abs'''
                     single_uri_dict = {'uri_abs': uri_k,
@@ -266,7 +270,12 @@ def main_loop(log_name):
                                        'min_bytes': min(uri_v['bytes']),
                                        'bytes': sum(uri_v['bytes']),
                                        'avg_bytes': float(format(sum(uri_v['bytes']) / len(uri_v['bytes']), '.2f')),
-                                       'args': []}
+                                       'args': [],
+                                       'max_time_request': tmp_res['max_time_request'],
+                                       'max_byte_request': tmp_res['max_byte_request']}
+                    if len(uri_v['args']) > MAX_ARG_NUM:
+                        logger.warning("{}:{} truncate arg_abs reverse sorted by 'hits' from {} to {} at {} due to the "
+                                       "MAX_ARG_NUM setting".format(log_name, uri_k, len(tmp_res), MAX_ARG_NUM, this_h_m))
                     for arg_k, arg_v in sorted(uri_v['args'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_ARG_NUM]:
                         '''取点击量前MAX_ARG_NUM的args_abs'''
                         single_arg_dict = {'args_abs': arg_k,
@@ -279,8 +288,7 @@ def main_loop(log_name):
                                            'min_bytes': min(arg_v['bytes']),
                                            'bytes': sum(arg_v['bytes']),
                                            'avg_bytes': float(format(sum(arg_v['bytes']) / len(arg_v['bytes']), '.2f')),
-                                           'method': arg_v['method'],
-                                           'example': arg_v['example']}
+                                           'method': arg_v['method']}
                         single_uri_dict['args'].append(single_arg_dict)
                     this_minute_res['requests'].append(single_uri_dict)
                 # 执行插入操作(每分钟的最终结果)
@@ -299,11 +307,17 @@ def main_loop(log_name):
                 tmp_res[uri_abs]['time'].append(line_res['request_time'])
                 tmp_res[uri_abs]['bytes'].append(line_res['bytes_sent'])
                 tmp_res[uri_abs]['hits'] += 1
+                if line_res['request_time'] > max(tmp_res[uri_abs]['time']):
+                    tmp_res[uri_abs]['max_time_request'] = line
+                if line_res['bytes_sent'] > max(tmp_res[uri_abs]['bytes']):
+                    tmp_res[uri_abs]['max_byte_request'] = line
             else:
                 tmp_res[uri_abs] = {'time': [line_res['request_time']],
                                     'bytes': [line_res['bytes_sent']],
                                     'hits': 1,
-                                    'args': {}}
+                                    'args': {},
+                                    'max_time_request': line,
+                                    'max_byte_request': line}
             tmp_res['minute_total_bytes'] += line_res['bytes_sent']
             tmp_res['minute_total_time'] += line_res['request_time']
 
@@ -316,9 +330,7 @@ def main_loop(log_name):
                 tmp_res[uri_abs]['args'][args_abs] = {'time': [line_res['request_time']],
                                                       'bytes': [line_res['bytes_sent']],
                                                       'hits': 1,
-                                                      'method': line_res['request_method'],
-                                                      'example': line_res['request_uri']}
-
+                                                      'method': line_res['request_method']}
             date = date_time[0]
             # 以下3行用于生成mongodb中文档的_id
             d_m_y = date.split('/')
