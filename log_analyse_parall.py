@@ -265,11 +265,11 @@ def main_loop(log_name):
                                        'max_time': max(uri_v['time']),
                                        'min_time': min(uri_v['time']),
                                        'time': sum(uri_v['time']),
-                                       'avg_time': float(format(sum(uri_v['time']) / len(uri_v['time']), '.2f')),
+                                       'avg_time': round(sum(uri_v['time']) / len(uri_v['time']), 3),
                                        'max_bytes': max(uri_v['bytes']),
                                        'min_bytes': min(uri_v['bytes']),
                                        'bytes': sum(uri_v['bytes']),
-                                       'avg_bytes': float(format(sum(uri_v['bytes']) / len(uri_v['bytes']), '.2f')),
+                                       'avg_bytes': int(sum(uri_v['bytes']) / len(uri_v['bytes'])),
                                        'args': [],
                                        'max_time_request': tmp_res['max_time_request'],
                                        'max_byte_request': tmp_res['max_byte_request']}
@@ -283,11 +283,11 @@ def main_loop(log_name):
                                            'max_time': max(arg_v['time']),
                                            'min_time': min(arg_v['time']),
                                            'time': sum(arg_v['time']),
-                                           'avg_time': float(format(sum(arg_v['time']) / len(arg_v['time']), '.2f')),
+                                           'avg_time': round(sum(arg_v['time']) / len(arg_v['time']), 2),
                                            'max_bytes': max(arg_v['bytes']),
                                            'min_bytes': min(arg_v['bytes']),
                                            'bytes': sum(arg_v['bytes']),
-                                           'avg_bytes': float(format(sum(arg_v['bytes']) / len(arg_v['bytes']), '.2f')),
+                                           'avg_bytes': int(sum(arg_v['bytes']) / len(arg_v['bytes'])),
                                            'method': arg_v['method']}
                         single_uri_dict['args'].append(single_arg_dict)
                     this_minute_res['requests'].append(single_uri_dict)
