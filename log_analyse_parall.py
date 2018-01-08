@@ -138,52 +138,20 @@ def get_quartile(data):
         return np.percentile(data, (0, 25, 50, 75, 100))
 
 
-def insert_mongo(mongo_db_obj, results, t_name, l_name, num, date, s_name):
-    """插入mongodb, 在主进程中根据函数返回值来决定是否退出对日志文件的循环, 进而退出主进程
-    results: mongodb文档
-    t_name: 集合名称
-    l_name: 日志名称
-    num: 当前已入库的行数
-    date: 今天日期,格式 170515
-    s_name: 主机名"""
-    try:
-        mongo_db_obj[t_name].insert(results)  # 插入数据
-        # 同时插入每台server已处理的行数
-        if mongo_db_obj['last_num'].find({'server': server}).count() == 0:
-            mongo_db_obj['last_num'].insert({'last_num': num, 'date': date, 'server': s_name})
+def special_insert(arr, v):
+    """list插入过程加入对最大值(index: -1)最小值(index: -2)的维护"""
+    if len(arr) == 1:
+        if v >= arr[0]:
+            arr.append(v)
         else:
-            mongo_db_obj['last_num'].update({'server': server}, {'$set': {'last_num': num, 'date': date}})
-        return True
-    except Exception as err:
-        logger.error('{}: insert data error: {}'.format(l_name, err))
-    finally:
-        mongo_client.close()
-
-
-def get_prev_num(l_name):
-    """取得本server今天已入库的行数 
-    l_name:日志文件名"""
-    try:
-        tmp = mongo_db['last_num'].find({'date': today, 'server': server}, {'last_num': 1, '_id': 0})
-        if tmp.count() == 1:
-            return tmp.next()['last_num']
-        elif tmp.count() == 0:
-            return 0
+            arr.insert(0, v)
+    else:
+        if v >= arr[-1]:
+            arr.append(v)
+        elif v <= arr[-2]:
+            arr.insert(-1, v)
         else:
-            logger.error("{}: more than one 'last_num' record of {} at {}, skip".format(l_name, server, today))
-    except Exception as err:
-        logger.error("{}: get 'last_num' of {} at {} error, skip: {}".format(l_name, server, today, err))
-
-
-def del_old_data(l_name):
-    """删除N天前的数据, 默认为LIMIT"""
-    col_name = mongo_db.collection_names()
-    del_col = sorted(col_name, reverse=True)[LIMIT:] if len(col_name) > LIMIT else []
-    try:
-        for col in del_col:
-            mongo_db.drop_collection(col)
-    except Exception as err:
-        logger.error("{}: delete collections before {} days error: {}".format(l_name, LIMIT, err))
+            arr.insert(-2, v)
 
 
 def final_uri_dicts(tmp_res):
@@ -243,6 +211,54 @@ def final_uri_dicts(tmp_res):
             single_uri_dict['args'].append(single_arg_dict)
         uris.append(single_uri_dict)
     return uris
+
+
+def insert_mongo(mongo_db_obj, results, t_name, l_name, num, date, s_name):
+    """插入mongodb, 在主进程中根据函数返回值来决定是否退出对日志文件的循环, 进而退出主进程
+    results: mongodb文档
+    t_name: 集合名称
+    l_name: 日志名称
+    num: 当前已入库的行数
+    date: 今天日期,格式 170515
+    s_name: 主机名"""
+    try:
+        mongo_db_obj[t_name].insert(results)  # 插入数据
+        # 同时插入每台server已处理的行数
+        if mongo_db_obj['last_num'].find({'server': server}).count() == 0:
+            mongo_db_obj['last_num'].insert({'last_num': num, 'date': date, 'server': s_name})
+        else:
+            mongo_db_obj['last_num'].update({'server': server}, {'$set': {'last_num': num, 'date': date}})
+        return True
+    except Exception as err:
+        logger.error('{}: insert data error: {}'.format(l_name, err))
+    finally:
+        mongo_client.close()
+
+
+def get_prev_num(l_name):
+    """取得本server今天已入库的行数
+    l_name:日志文件名"""
+    try:
+        tmp = mongo_db['last_num'].find({'date': today, 'server': server}, {'last_num': 1, '_id': 0})
+        if tmp.count() == 1:
+            return tmp.next()['last_num']
+        elif tmp.count() == 0:
+            return 0
+        else:
+            logger.error("{}: more than one 'last_num' record of {} at {}, skip".format(l_name, server, today))
+    except Exception as err:
+        logger.error("{}: get 'last_num' of {} at {} error, skip: {}".format(l_name, server, today, err))
+
+
+def del_old_data(l_name):
+    """删除N天前的数据, 默认为LIMIT"""
+    col_name = mongo_db.collection_names()
+    del_col = sorted(col_name, reverse=True)[LIMIT:] if len(col_name) > LIMIT else []
+    try:
+        for col in del_col:
+            mongo_db.drop_collection(col)
+    except Exception as err:
+        logger.error("{}: delete collections before {} days error: {}".format(l_name, LIMIT, err))
 
 
 def main(log_name):
@@ -312,12 +328,12 @@ def main(log_name):
             args_abs = line_res['args_abs']
             if uri_abs in tmp_res:
                 '''将uri数据汇总至临时字典'''
-                tmp_res[uri_abs]['time'].append(line_res['request_time'])
-                tmp_res[uri_abs]['bytes'].append(line_res['bytes_sent'])
+                special_insert(tmp_res[uri_abs]['time'], line_res['request_time'])
+                special_insert(tmp_res[uri_abs]['bytes'], line_res['bytes_sent'])
                 tmp_res[uri_abs]['hits'] += 1
-                if line_res['request_time'] > max(tmp_res[uri_abs]['time']):   # 两个max()是个优化点,若能维护最大最小值的list，性能相比如何
+                if line_res['request_time'] > tmp_res[uri_abs]['time'][-1]:
                     tmp_res[uri_abs]['max_time_request'] = line
-                if line_res['bytes_sent'] > max(tmp_res[uri_abs]['bytes']):
+                if line_res['bytes_sent'] > tmp_res[uri_abs]['bytes'][-1]:
                     tmp_res[uri_abs]['max_bytes_request'] = line
             else:
                 tmp_res[uri_abs] = {'time': [line_res['request_time']],
