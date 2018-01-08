@@ -127,6 +127,8 @@ def get_quartile(data):
     if not np:
         data = sorted(data)
         size = len(data)
+        if size == 1:
+            return data[0], data[0], data[0], data[0], data[0]
         half = size // 2
         q1 = get_median(data[:half])
         q2 = get_median(data)
@@ -184,7 +186,66 @@ def del_old_data(l_name):
         logger.error("{}: delete collections before {} days error: {}".format(l_name, LIMIT, err))
 
 
-def main_loop(log_name):
+def final_uri_dicts(tmp_res):
+    """对tmp_res里的原始数据进行整合生成每个uri_abs对应的字典,插入到this_minute_doc['request']中, 生成最终存储到mongodb的文档(字典)
+    一个uri_abs在this_minute_doc中对应的格式如下"""
+    uris = []
+    if len(tmp_res) > MAX_URI_NUM:
+        logger.warning("{}: truncate uri_abs reverse sorted by 'hits' from {} to {} at {} due to the "
+                       "MAX_URI_NUM setting".format(log_name, len(tmp_res), MAX_URI_NUM, this_h_m))
+    for uri_k, uri_v in sorted(tmp_res.items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_URI_NUM]:
+        '''取点击量前MAX_URI_NUM的uri_abs'''
+        uri_quartile_time = get_quartile(uri_v['time'])
+        uri_quartile_bytes = get_quartile(uri_v['bytes'])
+        single_uri_dict = {'uri_abs': uri_k,
+                           'hits': uri_v['hits'],
+                           'min_time': uri_quartile_time[0],
+                           'q1_time': uri_quartile_time[1],
+                           'q2_time': uri_quartile_time[2],
+                           'q3_time': uri_quartile_time[3],
+                           'max_time': uri_quartile_time[-1],
+                           'time': round(sum(uri_v['time']), 3),
+                           'avg_time': round(sum(uri_v['time']) / len(uri_v['time']), 3),
+                           'min_bytes': uri_quartile_bytes[0],
+                           'q1_bytes': uri_quartile_bytes[1],
+                           'q2_bytes': uri_quartile_bytes[2],
+                           'q3_bytes': uri_quartile_bytes[3],
+                           'max_bytes': uri_quartile_bytes[-1],
+                           'bytes': sum(uri_v['bytes']),
+                           'avg_bytes': int(sum(uri_v['bytes']) / len(uri_v['bytes'])),
+                           'args': [],
+                           'max_time_request': tmp_res[uri_k]['max_time_request'],
+                           'max_bytes_request': tmp_res[uri_k]['max_bytes_request']}
+        if len(uri_v['args']) > MAX_ARG_NUM:
+            logger.warning("{}:{} truncate arg_abs reverse sorted by 'hits' from {} to {} at {} due to the "
+                           "MAX_ARG_NUM setting".format(log_name, uri_k, len(tmp_res), MAX_ARG_NUM, this_h_m))
+        for arg_k, arg_v in sorted(uri_v['args'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_ARG_NUM]:
+            '''取点击量前MAX_ARG_NUM的args_abs'''
+            arg_quartile_time = get_quartile(arg_v['time'])
+            arg_quartile_bytes = get_quartile(arg_v['bytes'])
+            single_arg_dict = {'args_abs': arg_k,
+                               'hits': arg_v['hits'],
+                               'min_time': arg_quartile_time[0],
+                               'q1_time': arg_quartile_time[1],
+                               'q2_time': arg_quartile_time[2],
+                               'q3_time': arg_quartile_time[3],
+                               'max_time': arg_quartile_time[-1],
+                               'time': sum(arg_v['time']),
+                               'avg_time': round(sum(arg_v['time']) / len(arg_v['time']), 2),
+                               'min_bytes': arg_quartile_bytes[0],
+                               'q1_bytes': arg_quartile_bytes[1],
+                               'q2_bytes': arg_quartile_bytes[2],
+                               'q3_bytes': arg_quartile_bytes[3],
+                               'max_bytes': arg_quartile_bytes[-1],
+                               'bytes': sum(arg_v['bytes']),
+                               'avg_bytes': int(sum(arg_v['bytes']) / len(arg_v['bytes'])),
+                               'method': arg_v['method']}
+            single_uri_dict['args'].append(single_arg_dict)
+        uris.append(single_uri_dict)
+    return uris
+
+
+def main(log_name):
     """log_name:日志文件名"""
     invalid = 0  # 无效的请求数
     tmp_res = {'minute_total_bytes': 0, 'minute_total_time': 0}  # 存储处理过程中用于保存一分钟内的各项原始数据
@@ -215,12 +276,13 @@ def main_loop(log_name):
                 continue
             elif n > cur_num:
                 break
-            # 开始处理一行
+            # 开始处理
             line_res = process_line(line)
             if not line_res:
                 invalid += 1
                 continue
             date_time = line_res['time_local'].split(':')
+            date = date_time[0]
             hour = date_time[1]
             minute = date_time[2]
 
@@ -228,70 +290,17 @@ def main_loop(log_name):
             if this_h_m != '' and this_h_m != hour + minute:
                 # 存储一分钟区间内的最终汇总结果
                 prev_num_inner = get_prev_num(log_name)
-                this_minute_res = {
+                this_minute_doc = {
                     '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
                     'total_hits': n - 1 - prev_num_inner,
                     'invalid_hits': invalid,
                     'total_bytes': tmp_res.pop('minute_total_bytes'),
-                    'total_time': tmp_res.pop('minute_total_time'),
+                    'total_time': round(tmp_res.pop('minute_total_time'), 3),
                     'requests': []}
+                this_minute_doc['requests'].extend(final_uri_dicts(tmp_res))
 
-                # 对tmp_res里的原始数据进行整合,插入到this_minute_res['request']中, 生成最终存储到mongodb的文档(字典)
-                # 最终一个uri_abs在this_minute_res中对应的格式如下
-                if len(tmp_res) > MAX_URI_NUM:
-                    logger.warning("{}: truncate uri_abs reverse sorted by 'hits' from {} to {} at {} due to the "
-                                   "MAX_URI_NUM setting".format(log_name, len(tmp_res), MAX_URI_NUM, this_h_m))
-                for uri_k, uri_v in sorted(tmp_res.items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_URI_NUM]:
-                    '''取点击量前MAX_URI_NUM的uri_abs'''
-                    uri_quartile_time = get_quartile(uri_v['time'])
-                    uri_quartile_bytes = get_quartile(uri_v['bytes'])
-                    single_uri_dict = {'uri_abs': uri_k,
-                                       'hits': uri_v['hits'],
-                                       'min_time': uri_quartile_time[0],
-                                       'q1_time': uri_quartile_time[1],
-                                       'q2_time': uri_quartile_time[2],
-                                       'q3_time': uri_quartile_time[3],
-                                       'max_time': uri_quartile_time[-1],
-                                       'time': sum(uri_v['time']),
-                                       'avg_time': round(sum(uri_v['time']) / len(uri_v['time']), 3),
-                                       'min_bytes': uri_quartile_bytes[0],
-                                       'q1_bytes': uri_quartile_bytes[1],
-                                       'q2_bytes': uri_quartile_bytes[2],
-                                       'q3_bytes': uri_quartile_bytes[3],
-                                       'max_bytes': uri_quartile_bytes[-1],
-                                       'bytes': sum(uri_v['bytes']),
-                                       'avg_bytes': int(sum(uri_v['bytes']) / len(uri_v['bytes'])),
-                                       'args': [],
-                                       'max_time_request': tmp_res['max_time_request'],
-                                       'max_byte_request': tmp_res['max_byte_request']}
-                    if len(uri_v['args']) > MAX_ARG_NUM:
-                        logger.warning("{}:{} truncate arg_abs reverse sorted by 'hits' from {} to {} at {} due to the "
-                                       "MAX_ARG_NUM setting".format(log_name, uri_k, len(tmp_res), MAX_ARG_NUM, this_h_m))
-                    for arg_k, arg_v in sorted(uri_v['args'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_ARG_NUM]:
-                        '''取点击量前MAX_ARG_NUM的args_abs'''
-                        arg_quartile_time = get_quartile(arg_v['time'])
-                        arg_quartile_bytes = get_quartile(arg_v['bytes'])
-                        single_arg_dict = {'args_abs': arg_k,
-                                           'hits': arg_v['hits'],
-                                           'min_time': arg_quartile_time[0],
-                                           'q1_time': arg_quartile_time[1],
-                                           'q2_time': arg_quartile_time[2],
-                                           'q3_time': arg_quartile_time[3],
-                                           'max_time': arg_quartile_time[-1],
-                                           'time': sum(arg_v['time']),
-                                           'avg_time': round(sum(arg_v['time']) / len(arg_v['time']), 2),
-                                           'min_bytes': arg_quartile_bytes[0],
-                                           'q1_bytes': arg_quartile_bytes[1],
-                                           'q2_bytes': arg_quartile_bytes[2],
-                                           'q3_bytes': arg_quartile_bytes[3],
-                                           'max_bytes': arg_quartile_bytes[-1],
-                                           'bytes': sum(arg_v['bytes']),
-                                           'avg_bytes': int(sum(arg_v['bytes']) / len(arg_v['bytes'])),
-                                           'method': arg_v['method']}
-                        single_uri_dict['args'].append(single_arg_dict)
-                    this_minute_res['requests'].append(single_uri_dict)
                 # 执行插入操作(每分钟的最终结果)
-                if not insert_mongo(mongo_db, this_minute_res, y_m_d, log_name, n-1, y_m_d, server):
+                if not insert_mongo(mongo_db, this_minute_doc, y_m_d, log_name, n-1, y_m_d, server):
                     break
                 # 清空临时字典tmp_res和invalid
                 tmp_res = {'minute_total_bytes': 0, 'minute_total_time': 0}
@@ -309,14 +318,14 @@ def main_loop(log_name):
                 if line_res['request_time'] > max(tmp_res[uri_abs]['time']):   # 两个max()是个优化点,若能维护最大最小值的list，性能相比如何
                     tmp_res[uri_abs]['max_time_request'] = line
                 if line_res['bytes_sent'] > max(tmp_res[uri_abs]['bytes']):
-                    tmp_res[uri_abs]['max_byte_request'] = line
+                    tmp_res[uri_abs]['max_bytes_request'] = line
             else:
                 tmp_res[uri_abs] = {'time': [line_res['request_time']],
                                     'bytes': [line_res['bytes_sent']],
                                     'hits': 1,
                                     'args': {},
                                     'max_time_request': line,
-                                    'max_byte_request': line}
+                                    'max_bytes_request': line}
             tmp_res['minute_total_bytes'] += line_res['bytes_sent']
             tmp_res['minute_total_time'] += line_res['request_time']
 
@@ -330,12 +339,11 @@ def main_loop(log_name):
                                                       'bytes': [line_res['bytes_sent']],
                                                       'hits': 1,
                                                       'method': line_res['request_method']}
-            date = date_time[0]
             # 以下3行用于生成mongodb中文档的_id
             d_m_y = date.split('/')
             y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]  # 作为mongodb库里的集合的名称(每天一个集合)
             this_h_m = hour + minute
-            if y_m_d != today:
+            if y_m_d != today:    # 本质上只需第一行检测即可，待优化
                 logger.error("{}: not today's log, exit".format(log_name))
                 break
     del_old_data(log_name)
@@ -359,6 +367,6 @@ if __name__ == "__main__":
         if len(logs_list) > 0:
             try:
                 with Pool(len(logs_list)) as p:
-                    p.map(main_loop, logs_list)
+                    p.map(main, logs_list)
             except KeyboardInterrupt:
                 exit(10)
