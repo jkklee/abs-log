@@ -172,7 +172,8 @@ def final_uri_dicts(stage_res):
                            'bytes': sum(uri_v['bytes']),
                            'args': [],
                            'max_time_request': stage_res[uri_k]['max_time_request'],
-                           'max_bytes_request': stage_res[uri_k]['max_bytes_request']}
+                           'max_bytes_request': stage_res[uri_k]['max_bytes_request'],
+                           'response_code': stage_res[uri_k]['response_code']}
         if len(uri_v['args']) > MAX_ARG_NUM:
             logger.warning("{}:{} truncate arg_abs reverse sorted by 'hits' from {} to {} at {} due to the "
                            "MAX_ARG_NUM setting".format(log_name, uri_k, len(stage_res), MAX_ARG_NUM, this_h_m))
@@ -194,7 +195,8 @@ def final_uri_dicts(stage_res):
                                'q3_bytes': int(arg_quartile_bytes[3]),
                                'max_bytes': arg_quartile_bytes[-1],
                                'bytes': sum(arg_v['bytes']),
-                               'method': arg_v['method']}
+                               'method': arg_v['method'],
+                               'response_code': stage_res[uri_k]['args'][arg_k]['response_code']}
             single_uri_dict['args'].append(single_arg_dict)
         uris.append(single_uri_dict)
     return uris
@@ -205,8 +207,9 @@ def append_line_to_stage(line_res, stage_res, line_str):
     line_str: 日志行原始数据"""
     uri_abs = line_res['uri_abs']
     args_abs = line_res['args_abs']
+    # 将该行数据汇总至临时字典
     if uri_abs in stage_res:
-        '''将uri数据汇总至临时字典'''
+        # 记录最大时间和最大字节的请求
         if line_res['request_time'] > stage_res[uri_abs]['time'][-1]:
             stage_res[uri_abs]['max_time_request'] = line_str
             if line_res['bytes_sent'] > stage_res[uri_abs]['bytes'][-1]:
@@ -218,26 +221,38 @@ def append_line_to_stage(line_res, stage_res, line_str):
         special_insert(stage_res[uri_abs]['time'], line_res['request_time'])
         special_insert(stage_res[uri_abs]['bytes'], line_res['bytes_sent'])
         stage_res[uri_abs]['hits'] += 1
+        # http响应码
+        if line_res['response_code'] in stage_res[uri_abs]['response_code']:
+            stage_res[uri_abs]['response_code'][line_res['response_code']] += 1
+        else:
+            stage_res[uri_abs]['response_code'][line_res['response_code']] = 1
     else:
         stage_res[uri_abs] = {'time': [line_res['request_time']],
                               'bytes': [line_res['bytes_sent']],
                               'hits': 1,
                               'args': {},
                               'max_time_request': line_str,
-                              'max_bytes_request': line_str}
+                              'max_bytes_request': line_str,
+                              'response_code': {line_res['response_code']: 1}}
     stage_res['minute_total_bytes'] += line_res['bytes_sent']
     stage_res['minute_total_time'] += line_res['request_time']
 
+    # 将args数据汇总到临时字典
     if args_abs in stage_res[uri_abs]['args']:
-        '''将args数据汇总到临时字典'''
         stage_res[uri_abs]['args'][args_abs]['time'].append(line_res['request_time'])
         stage_res[uri_abs]['args'][args_abs]['bytes'].append(line_res['bytes_sent'])
         stage_res[uri_abs]['args'][args_abs]['hits'] += 1
+        # http响应码
+        if line_res['response_code'] in stage_res[uri_abs]['args'][args_abs]['response_code']:
+            stage_res[uri_abs]['args'][args_abs]['response_code'][line_res['response_code']] += 1
+        else:
+            stage_res[uri_abs]['args'][args_abs]['response_code'][line_res['response_code']] = 1
     else:
         stage_res[uri_abs]['args'][args_abs] = {'time': [line_res['request_time']],
                                                 'bytes': [line_res['bytes_sent']],
                                                 'hits': 1,
-                                                'method': line_res['request_method']}
+                                                'method': line_res['request_method'],
+                                                'response_code': {line_res['response_code']: 1}}
 
 
 def insert_mongo(mongo_db_obj, results, t_name, l_name, num, date, s_name):
