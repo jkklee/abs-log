@@ -10,18 +10,14 @@ from socket import gethostname
 from urllib.parse import unquote
 from multiprocessing import Pool
 from random import choice
-import os
+from os import path, listdir, chdir
+from time import strftime, localtime
+from subprocess import run , PIPE
+from sys import exit
 import re
-import time
 import fcntl
 import logging
 import pymongo
-import subprocess
-from sys import exit
-try:
-    import numpy as np
-except ImportError:
-    np = False
 
 logging.basicConfig(format='%(asctime)s %(levelname)8s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 logger = logging.getLogger(__name__)
@@ -124,22 +120,19 @@ def get_median(sorted_data):
 def get_quartile(data):
     """获取列表的4分位数(参考盒须图思想,用于体现响应时间和响应大小的分布.)
     以及min和max值(放到这里主要考虑对排序后数据的尽可能利用)"""
-    if not np:
-        data = sorted(data)
-        size = len(data)
-        if size == 1:
-            return data[0], data[0], data[0], data[0], data[0]
-        half = size // 2
-        q1 = get_median(data[:half])
-        q2 = get_median(data)
-        q3 = get_median(data[half + 1:]) if size % 2 == 1 else get_median(data[half:])
-        return data[0], q1, q2, q3, data[-1]
-    else:
-        return np.percentile(data, (0, 25, 50, 75, 100))
+    data = sorted(data)
+    size = len(data)
+    if size == 1:
+        return data[0], data[0], data[0], data[0], data[0]
+    half = size // 2
+    q1 = get_median(data[:half])
+    q2 = get_median(data)
+    q3 = get_median(data[half + 1:]) if size % 2 == 1 else get_median(data[half:])
+    return data[0], q1, q2, q3, data[-1]
 
 
 def special_insert(arr, v):
-    """list插入过程加入对最大值(index: -1)最小值(index: -2)的维护"""
+    """list插入过程加入对最大值(index: -1)的维护"""
     if len(arr) == 1:
         if v >= arr[0]:
             arr.append(v)
@@ -148,10 +141,8 @@ def special_insert(arr, v):
     else:
         if v >= arr[-1]:
             arr.append(v)
-        elif v <= arr[-2]:
-            arr.insert(-1, v)
         else:
-            arr.insert(-2, v)
+            arr.insert(-1, v)
 
 
 def final_uri_dicts(stage_res):
@@ -168,19 +159,17 @@ def final_uri_dicts(stage_res):
         single_uri_dict = {'uri_abs': uri_k,
                            'hits': uri_v['hits'],
                            'min_time': uri_quartile_time[0],
-                           'q1_time': uri_quartile_time[1],
-                           'q2_time': uri_quartile_time[2],
-                           'q3_time': uri_quartile_time[3],
+                           'q1_time': round(uri_quartile_time[1], 3),
+                           'q2_time': round(uri_quartile_time[2], 3),
+                           'q3_time': round(uri_quartile_time[3], 3),
                            'max_time': uri_quartile_time[-1],
-                           'time': round(sum(uri_v['time']), 3),
-                           'avg_time': round(sum(uri_v['time']) / len(uri_v['time']), 3),
+                           'time': int(sum(uri_v['time'])),
                            'min_bytes': uri_quartile_bytes[0],
-                           'q1_bytes': uri_quartile_bytes[1],
-                           'q2_bytes': uri_quartile_bytes[2],
-                           'q3_bytes': uri_quartile_bytes[3],
+                           'q1_bytes': int(uri_quartile_bytes[1]),
+                           'q2_bytes': int(uri_quartile_bytes[2]),
+                           'q3_bytes': int(uri_quartile_bytes[3]),
                            'max_bytes': uri_quartile_bytes[-1],
                            'bytes': sum(uri_v['bytes']),
-                           'avg_bytes': int(sum(uri_v['bytes']) / len(uri_v['bytes'])),
                            'args': [],
                            'max_time_request': stage_res[uri_k]['max_time_request'],
                            'max_bytes_request': stage_res[uri_k]['max_bytes_request']}
@@ -194,19 +183,17 @@ def final_uri_dicts(stage_res):
             single_arg_dict = {'args_abs': arg_k,
                                'hits': arg_v['hits'],
                                'min_time': arg_quartile_time[0],
-                               'q1_time': arg_quartile_time[1],
-                               'q2_time': arg_quartile_time[2],
-                               'q3_time': arg_quartile_time[3],
+                               'q1_time': round(arg_quartile_time[1], 3),
+                               'q2_time': round(arg_quartile_time[2], 3),
+                               'q3_time': round(arg_quartile_time[3], 3),
                                'max_time': arg_quartile_time[-1],
-                               'time': round(sum(arg_v['time']), 3),
-                               'avg_time': round(sum(arg_v['time']) / len(arg_v['time']), 2),
+                               'time': int(sum(arg_v['time'])),
                                'min_bytes': arg_quartile_bytes[0],
-                               'q1_bytes': arg_quartile_bytes[1],
-                               'q2_bytes': arg_quartile_bytes[2],
-                               'q3_bytes': arg_quartile_bytes[3],
+                               'q1_bytes': int(arg_quartile_bytes[1]),
+                               'q2_bytes': int(arg_quartile_bytes[2]),
+                               'q3_bytes': int(arg_quartile_bytes[3]),
                                'max_bytes': arg_quartile_bytes[-1],
                                'bytes': sum(arg_v['bytes']),
-                               'avg_bytes': int(sum(arg_v['bytes']) / len(arg_v['bytes'])),
                                'method': arg_v['method']}
             single_uri_dict['args'].append(single_arg_dict)
         uris.append(single_uri_dict)
@@ -220,13 +207,17 @@ def append_line_to_stage(line_res, stage_res, line_str):
     args_abs = line_res['args_abs']
     if uri_abs in stage_res:
         '''将uri数据汇总至临时字典'''
+        if line_res['request_time'] > stage_res[uri_abs]['time'][-1]:
+            stage_res[uri_abs]['max_time_request'] = line_str
+            if line_res['bytes_sent'] > stage_res[uri_abs]['bytes'][-1]:
+                stage_res[uri_abs]['max_bytes_request'] = "same as max_time_request"
+        else:
+            if line_res['bytes_sent'] > stage_res[uri_abs]['bytes'][-1]:
+                stage_res[uri_abs]['max_bytes_request'] = line_str
+
         special_insert(stage_res[uri_abs]['time'], line_res['request_time'])
         special_insert(stage_res[uri_abs]['bytes'], line_res['bytes_sent'])
         stage_res[uri_abs]['hits'] += 1
-        if line_res['request_time'] > stage_res[uri_abs]['time'][-1]:
-            stage_res[uri_abs]['max_time_request'] = line_str
-        if line_res['bytes_sent'] > stage_res[uri_abs]['bytes'][-1]:
-            stage_res[uri_abs]['max_bytes_request'] = line_str
     else:
         stage_res[uri_abs] = {'time': [line_res['request_time']],
                               'bytes': [line_res['bytes_sent']],
@@ -312,7 +303,7 @@ def main(log_name):
     my_connect(mongo_db_name)
     # 开始处理逻辑
     # 当前日志文件总行数
-    cur_num = int(subprocess.run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=subprocess.PIPE, universal_newlines=True).stdout.split()[0])
+    cur_num = int(run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=PIPE, universal_newlines=True).stdout.split()[0])
     # 上一次处理到的行数
     prev_num_outer = get_prev_num(log_name)
     if prev_num_outer is None:
@@ -368,7 +359,7 @@ def main(log_name):
 
 if __name__ == "__main__":
     server = gethostname()  # 主机名
-    today = time.strftime('%y%m%d', time.localtime())  # 今天日期
+    today = strftime('%y%m%d', localtime())  # 今天日期
     log_pattern_obj = re.compile(log_pattern)
     request_uri_pattern_obj = re.compile(request_uri_pattern)
 
@@ -378,9 +369,9 @@ if __name__ == "__main__":
         except BlockingIOError:
             exit(11)
         # 以上5行为实现单例模式
-        os.chdir(log_dir)
-        logs_list = [i for i in os.listdir(log_dir) if
-                     'access' in i and os.path.isfile(i) and i.split('.access')[0] in todo]
+        chdir(log_dir)
+        logs_list = [i for i in listdir(log_dir) if
+                     'access' in i and path.isfile(i) and i.split('.access')[0] in todo]
         if len(logs_list) > 0:
             try:
                 with Pool(len(logs_list)) as p:
