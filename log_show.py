@@ -2,20 +2,23 @@
 # coding:utf-8
 """
 Usage:
-  log_show <site_name> [options] [-f <start_time> [-t <end_time>]] [(-u <uri> [(--distribution|--detail)]|-r <request_uri>)]
-
+  log_show <site_name> [options]
+  log_show <site_name> [options] -r <request_uri>
+  log_show <site_name> [options] -u <uri> [(--distribution|--detail)]
+  
 Options:
   -h --help                       Show this screen.
   -f --from <start_time>          Start time.Format: %y%m%d[%H[%M]], %H and %M is optional
   -t --to <end_time>              End time.Same as --from
-  -l --limit <num>                Number of lines in the output, 0 means no limit. [default: 20]
+  -l --limit <num>                Number of lines in output, 0 means no limit. [default: 10]
   -s --server <server>            Web server hostname
-  -u --uri <uri>                  URI in request, must in a pair of quotes 
-  -r --request_uri <request_uri>  Full original request URI (with arguments), must in a pair of quotes
-  -g --group_by <group_by>        Group by every minute or every ten minutes or every hour or every day
-                                  Valid values: "min", "ten_min", "hour", "day". [default: min]
-  --distribution                  Display result of -u or -r within every period which --group_by specific
-  --detail                        Display detail of args of -u or -r specific
+  -u --uri <uri>                  URI in request(should in quotation marks). Default implies --detail
+  -r --request_uri <request_uri>  Show distribution(about hits,bytes,time) of a special full_request_uri(should in quotation marks)
+                                  in each period(which --group_by specific). Default implies --distribution
+  --detail                        Display details of args analyse of the uri that -u specific
+  --distribution                  Show distribution(about hits,bytes,time) of uri  in every period(which --group_by specific)
+  -g --group_by <group_by>        Group by every minute, every ten minutes, every hour or every day,
+                                  valid values: "minute", "ten_min", "hour", "day". [default: hour]
 """
 
 import pymongo
@@ -27,10 +30,10 @@ from functools import wraps
 from copy import deepcopy
 
 arguments = docopt(__doc__)
-# print(arguments)
-if arguments['--group_by'] not in ('min', 'ten_min', 'hour', 'day'):
-    '''判断--group_by合理性'''
-    print("  Warning: --group_by must be one of 'min', 'ten_min', 'hour', 'day'")
+print(arguments)
+# 判断--group_by合理性
+if arguments['--group_by'] not in ('minute', 'ten_min', 'hour', 'day'):
+    print("  Warning: --group_by must be one of 'minute', 'ten_min', 'hour', 'day'")
     exit(10)
 
 today = time.strftime('%y%m%d', time.localtime())  # 今天日期,取两位年份
@@ -73,7 +76,7 @@ def get_human_size(n):
     while n//1024 > 0 and i < 3:
         n = n/1024
         i += 1
-    return format(n, '.2f')+' '+units[i]
+    return format(n, '.2f') + ' ' + units[i]
 
 
 def base_condition(server, start, end, uri_abs, args_abs):
@@ -86,7 +89,7 @@ def base_condition(server, start, end, uri_abs, args_abs):
     uri_abs: 经过抽象的uri
     args_abs: 经过抽象的args"""
     if start and end:
-        if int(end[:6]) - int(start[:6]) > 1:  # 判断--from --to时间跨度不能超过单独一天
+        if int(end[:6]) - int(start[:6]) > 1:  # 判断--from --to时间跨度不能超过单独一天(当前limit)
             print('  Warning: can only do analyse within a single day for now')
             exit(10)
         match = {'$match': {'$and': [{'_id': {'$gte': start}}, {'_id': {'$lt': end}}]}}
