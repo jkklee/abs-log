@@ -12,8 +12,8 @@ Options:
   -t --to <end_time>              End time.Same as --from
   -l --limit <num>                Number of lines in output, 0 means no limit. [default: 10]
   -s --server <server>            Web server hostname
-  -u --uri <uri>                  URI in request(should in quotation marks). Default implies --detail
-  -r --request_uri <request_uri>  Show distribution(about hits,bytes,time) of a special full_request_uri(should in quotation marks)
+  -u --uri <uri>                  URI in request(should inside quotation marks). Default implies --detail
+  -r --request_uri <request_uri>  Show distribution(about hits,bytes,time) of a special full_request_uri(should inside quotation marks)
                                   in each period(which --group_by specific). Default implies --distribution
   --detail                        Display details of args analyse of the uri that -u specific
   --distribution                  Show distribution(about hits,bytes,time) of uri  in every period(which --group_by specific)
@@ -80,9 +80,8 @@ def get_human_size(n):
 
 
 def base_condition(server, start, end, uri_abs, args_abs):
-    """额外的 server或者起始时间条件. 返回一个mongodb中aggregate操作的$match条件
+    """额外的 server或 起始时间 条件. 返回一个mongodb中aggregate操作的$match条件
     用$and操作符，方便对$match条件进行增减
-    what: hits or bytes
     server: 显示来自该server的日志
     start: 开始时间
     end: 结束时间
@@ -113,8 +112,16 @@ def base_summary(what, limit):
     limit: 限制显示多少行
     """
     pipeline0 = [{'$group': {'_id': 'null', 'total': {'$sum': '$total_' + what}}}]
-    pipeline1 = [{'$project': {'requests.uri_abs': 1, 'requests.' + what: 1}}, {'$unwind': "$requests"},
-                 {'$group': {'_id': '$requests.uri_abs', what: {'$sum': '$requests.' + what}}}]
+    pipeline1 = [
+        {'$project': {'requests.uri_abs': 1, 'requests.' + what: 1,
+                      'requests.min_time': 1, 'requests.q1_time': 1, 'requests.q2_time': 1, 'requests.q3_time': 1, 'requests.max_time': 1,
+                      'requests.min_bytes': 1, 'requests.q1_bytes': 1, 'requests.q2_bytes': 1, 'requests.q3_bytes': 1, 'requests.max_bytes': 1}},
+        {'$unwind': '$requests'},
+        {'$group': {'_id': '$requests.uri_abs', what: {'$sum': '$requests.' + what},
+                    'q1_time': {'$avg': '$requests.q1_time'}, 'q2_time': {'$avg': '$requests.q2_time'},
+                    'q3_time': {'$avg': '$requests.q3_time'}, 'max_time': {'$avg': '$requests.max_time'},
+                    'q1_bytes': {'$avg': '$requests.q1_bytes'}, 'q2_bytes': {'$avg': '$requests.q2_bytes'},
+                    'q3_bytes': {'$avg': '$requests.q3_bytes'}, 'max_bytes': {'$avg': '$requests.max_bytes'}}}]
     additional_condition = base_condition(arguments['--server'], arguments['--from'], arguments['--to'], None, None)
     pipeline0.insert(0, additional_condition)
     pipeline1.insert(0, additional_condition)
@@ -126,42 +133,48 @@ def base_summary(what, limit):
     except StopIteration:
         print('  Warning: there is no record in the condition you specified')
         exit(11)
-    # pymongo.command_cursor.CommandCursor 对象无法保留结果中的顺序，故而mongodb pipeline中就不需要调用$sort排序
+    # pymongo.command_cursor.CommandCursor 对象无法保留结果中的顺序，故而mongodb pipeline中就无需调用$sort排序
     total_uri = mongo_col.aggregate(pipeline1)
-    # 这一步来对pymongo.command_cursor.CommandCursor中的每一行进行排序，并存进list对象
+    # 对pymongo.command_cursor.CommandCursor中的每一行进行排序，并存进list对象
     total_uri = sorted(total_uri, key=lambda x: x[what], reverse=True)
-    if what == 'hits':
-        global total_hits  # 为了给bytes和time维度求每个uri均值使用
-        total_hits = deepcopy(total_uri)
     if int(limit):
         total_uri = total_uri[:int(limit)]
     if what == 'hits':
         print('{0}\nTotal {1}: {2}\n{0}'.format('=' * 20, what, collection_total))
-        print('{}    {}    {}'.format('hits'.rjust(10), 'percent'.rjust(10), 'uri_abs'))
+        print('{}  {}  {}  {}  {}'.format('hits'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(41), 'bytes_distribution(byte)'.center(44), 'uri_abs'))
     elif what == 'bytes':
         print('{0}\nTotal {1}: {2}\n{0}'.format('='*20, what, get_human_size(collection_total)))
-        print('{}    {}    {}    {}'.format('bytes'.rjust(10), 'percent'.rjust(10), 'avg_bytes'.rjust(10), 'uri_abs'))
+        print('{}  {}  {}  {}  {}'.format('bytes'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(41), 'bytes_distribution(byte)'.center(44), 'uri_abs'))
     elif what == 'time':
         print('{0}\nTotal cum. {1}: {2}s\n{0}'.format('=' * 20, what, format(collection_total, '.0f')))
-        print('{}    {}    {}    {}'.format('cum. time'.rjust(10), 'percent'.rjust(10), 'avg_time'.rjust(10), 'uri_abs'))
+        print('{}  {}  {}  {}  {}'.format('cum. time'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(41), 'bytes_distribution(byte)'.center(44), 'uri_abs'))
     for one_doc in total_uri:
         uri = one_doc['_id']
         value = one_doc[what]
-        if what != 'hits':
-            '''bytes和time要计算平均值'''
-            for pair in total_hits:
-                if pair['_id'] == uri:
-                    hits = pair['hits']
         if what == 'hits':
-            print('{}   {}%    {}'.format(str(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(10), uri))
+            print('{}  {}%  {}  {}  {}'.format(
+                str(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(6),
+                format('%25<{} %50<{} %75<{} %100<{}'.format(
+                    round(one_doc['q1_time'],3), round(one_doc['q2_time'],3), round(one_doc['q3_time'],3), round(one_doc['max_time'],3))).ljust(41),
+                format('%25<{} %50<{} %75<{} %100<{}'.format(
+                    int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44),
+                uri))
         elif what == 'bytes':
-            print('{}   {}%    {}    {}'.format(
-                get_human_size(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(10),
-                get_human_size(value / hits).rjust(10), uri))
+            print('{}  {}%  {}  {}  {}'.format(
+                get_human_size(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(6),
+                format('%25<{} %50<{} %75<{} %100<{}'.format(
+                    round(one_doc['q1_time'],3), round(one_doc['q2_time'],3), round(one_doc['q3_time'],3), round(one_doc['max_time'],3))).ljust(41),
+                format('%25<{} %50<{} %75<{} %100<{}'.format(
+                    int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44),
+                uri))
         elif what == 'time':
-            print('{}s   {}%   {}s    {}'.format(format(value, '.0f').rjust(9),
-                                                 format(value / collection_total * 100, '.2f').rjust(10),
-                                                 format(value / hits, '.3f').rjust(10), uri))
+            print('{}  {}%  {}  {}  {}'.format(
+                format(value, '.0f').rjust(9), format(value / collection_total * 100, '.2f').rjust(6),
+                format('%25<{} %50<{} %75<{} %100<{}'.format(
+                    round(one_doc['q1_time'],3), round(one_doc['q2_time'],3), round(one_doc['q3_time'],3), round(one_doc['max_time'],3))).ljust(41),
+                format('%25<{} %50<{} %75<{} %100<{}'.format(
+                    int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44),
+                uri))
 
 
 def text_abstract(text, what):
