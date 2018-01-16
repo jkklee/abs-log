@@ -111,7 +111,7 @@ def base_summary(what, limit):
     what: 'hits' or 'bytes' or 'time'
     limit: 限制显示多少行
     """
-    pipeline0 = [{'$group': {'_id': 'null', 'total': {'$sum': '$total_' + what}}}]
+    pipeline0 = [{'$group': {'_id': 'null', 'total': {'$sum': '$total_' + what}, 'invalid': {'$sum': '$invalid_hits'}}}]
     pipeline1 = [
         {'$project': {'requests.uri_abs': 1, 'requests.' + what: 1,
                       'requests.min_time': 1, 'requests.q1_time': 1, 'requests.q2_time': 1, 'requests.q3_time': 1, 'requests.max_time': 1,
@@ -129,7 +129,9 @@ def base_summary(what, limit):
     # print(pipeline1)  # debug
     try:
         # 符合条件的总hits/bytes/time
-        collection_total = mongo_col.aggregate(pipeline0).next()['total']
+        total_and_invalid = mongo_col.aggregate(pipeline0).next()
+        collection_total = total_and_invalid['total']
+        invalid_hits = total_and_invalid['invalid']
     except StopIteration:
         print('  Warning: there is no record in the condition you specified')
         exit(11)
@@ -140,13 +142,13 @@ def base_summary(what, limit):
     if int(limit):
         total_uri = total_uri[:int(limit)]
     if what == 'hits':
-        print('{0}\nTotal {1}: {2}\n{0}'.format('=' * 20, what, collection_total))
+        print('{0}\nTotal_{1}:{2} invalid_hits:{3}\n{0}'.format('=' * 20, what, collection_total, invalid_hits))
         print('{}  {}  {}  {}  {}'.format('hits'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(41), 'bytes_distribution(byte)'.center(44), 'uri_abs'))
     elif what == 'bytes':
-        print('{0}\nTotal {1}: {2}\n{0}'.format('='*20, what, get_human_size(collection_total)))
+        print('{0}\nTotal_{1}:{2}\n{0}'.format('='*20, what, get_human_size(collection_total)))
         print('{}  {}  {}  {}  {}'.format('bytes'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(41), 'bytes_distribution(byte)'.center(44), 'uri_abs'))
     elif what == 'time':
-        print('{0}\nTotal cum. {1}: {2}s\n{0}'.format('=' * 20, what, format(collection_total, '.0f')))
+        print('{0}\nTotal_{1}:{2}s\n{0}'.format('=' * 20, what, format(collection_total, '.0f')))
         print('{}  {}  {}  {}  {}'.format('cum. time'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(41), 'bytes_distribution(byte)'.center(44), 'uri_abs'))
     for one_doc in total_uri:
         uri = one_doc['_id']
@@ -169,7 +171,7 @@ def base_summary(what, limit):
                 uri))
         elif what == 'time':
             print('{}  {}%  {}  {}  {}'.format(
-                format(value, '.0f').rjust(9), format(value / collection_total * 100, '.2f').rjust(6),
+                format(value, '.0f').rjust(10), format(value / collection_total * 100, '.2f').rjust(6),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
                     round(one_doc['q1_time'],3), round(one_doc['q2_time'],3), round(one_doc['q3_time'],3), round(one_doc['max_time'],3))).ljust(41),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
