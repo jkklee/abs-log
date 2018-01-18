@@ -27,7 +27,6 @@ import re
 from sys import exit, argv
 from docopt import docopt
 from functools import wraps
-from copy import deepcopy
 
 arguments = docopt(__doc__)
 print(arguments)
@@ -143,13 +142,13 @@ def base_summary(what, limit):
         total_uri = total_uri[:int(limit)]
     if what == 'hits':
         print('{0}\nTotal_{1}:{2} invalid_hits:{3}\n{0}'.format('=' * 20, what, collection_total, invalid_hits))
-        print('{}  {}  {}  {}  {}'.format('hits'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(41), 'bytes_distribution(byte)'.center(44), 'uri_abs'))
+        print('{}  {}  {}  {}  {}'.format('hits'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(44), 'uri_abs'))
     elif what == 'bytes':
         print('{0}\nTotal_{1}:{2}\n{0}'.format('='*20, what, get_human_size(collection_total)))
-        print('{}  {}  {}  {}  {}'.format('bytes'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(41), 'bytes_distribution(byte)'.center(44), 'uri_abs'))
+        print('{}  {}  {}  {}  {}'.format('bytes'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(44), 'uri_abs'))
     elif what == 'time':
         print('{0}\nTotal_{1}:{2}s\n{0}'.format('=' * 20, what, format(collection_total, '.0f')))
-        print('{}  {}  {}  {}  {}'.format('cum. time'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(41), 'bytes_distribution(byte)'.center(44), 'uri_abs'))
+        print('{}  {}  {}  {}  {}'.format('cum. time'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(44), 'uri_abs'))
     for one_doc in total_uri:
         uri = one_doc['_id']
         value = one_doc[what]
@@ -157,7 +156,7 @@ def base_summary(what, limit):
             print('{}  {}%  {}  {}  {}'.format(
                 str(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(6),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
-                    round(one_doc['q1_time'],3), round(one_doc['q2_time'],3), round(one_doc['q3_time'],3), round(one_doc['max_time'],3))).ljust(41),
+                    round(one_doc['q1_time'],2), round(one_doc['q2_time'],2), round(one_doc['q3_time'],2), round(one_doc['max_time'],2))).ljust(37),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
                     int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44),
                 uri))
@@ -165,7 +164,7 @@ def base_summary(what, limit):
             print('{}  {}%  {}  {}  {}'.format(
                 get_human_size(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(6),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
-                    round(one_doc['q1_time'],3), round(one_doc['q2_time'],3), round(one_doc['q3_time'],3), round(one_doc['max_time'],3))).ljust(41),
+                    round(one_doc['q1_time'],2), round(one_doc['q2_time'],2), round(one_doc['q3_time'],2), round(one_doc['max_time'],2))).ljust(37),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
                     int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44),
                 uri))
@@ -173,7 +172,7 @@ def base_summary(what, limit):
             print('{}  {}%  {}  {}  {}'.format(
                 format(value, '.0f').rjust(10), format(value / collection_total * 100, '.2f').rjust(6),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
-                    round(one_doc['q1_time'],3), round(one_doc['q2_time'],3), round(one_doc['q3_time'],3), round(one_doc['max_time'],3))).ljust(41),
+                    round(one_doc['q1_time'],2), round(one_doc['q2_time'],2), round(one_doc['q3_time'],2), round(one_doc['max_time'],2))).ljust(37),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
                     int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44),
                 uri))
