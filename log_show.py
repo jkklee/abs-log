@@ -29,7 +29,7 @@ from docopt import docopt
 from functools import wraps
 
 arguments = docopt(__doc__)
-print(arguments)
+# print(arguments)  #debug
 # 判断--group_by合理性
 if arguments['--group_by'] not in ('minute', 'ten_min', 'hour', 'day'):
     print("  Warning: --group_by must be one of 'minute', 'ten_min', 'hour', 'day'")
@@ -78,7 +78,7 @@ def get_human_size(n):
     return format(n, '.2f') + ' ' + units[i]
 
 
-def base_condition(server, start, end, uri_abs, args_abs):
+def base_condition(server, start, end, uri_abs, args_abs=None):
     """额外的 server或 起始时间 条件. 返回一个mongodb中aggregate操作的$match条件
     用$and操作符，方便对$match条件进行增减
     server: 显示来自该server的日志
@@ -156,7 +156,7 @@ def base_summary(what, limit):
             print('{}  {}%  {}  {}  {}'.format(
                 str(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(6),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
-                    round(one_doc['q1_time'],2), round(one_doc['q2_time'],2), round(one_doc['q3_time'],2), round(one_doc['max_time'],2))).ljust(37),
+                    round(one_doc['q1_time'], 2), round(one_doc['q2_time'], 2), round(one_doc['q3_time'], 2), round(one_doc['max_time'], 2))).ljust(37),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
                     int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44),
                 uri))
@@ -164,7 +164,7 @@ def base_summary(what, limit):
             print('{}  {}%  {}  {}  {}'.format(
                 get_human_size(value).rjust(10), format(value / collection_total * 100, '.2f').rjust(6),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
-                    round(one_doc['q1_time'],2), round(one_doc['q2_time'],2), round(one_doc['q3_time'],2), round(one_doc['max_time'],2))).ljust(37),
+                    round(one_doc['q1_time'], 2), round(one_doc['q2_time'], 2), round(one_doc['q3_time'], 2), round(one_doc['max_time'], 2))).ljust(37),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
                     int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44),
                 uri))
@@ -172,7 +172,7 @@ def base_summary(what, limit):
             print('{}  {}%  {}  {}  {}'.format(
                 format(value, '.0f').rjust(10), format(value / collection_total * 100, '.2f').rjust(6),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
-                    round(one_doc['q1_time'],2), round(one_doc['q2_time'],2), round(one_doc['q3_time'],2), round(one_doc['max_time'],2))).ljust(37),
+                    round(one_doc['q1_time'], 2), round(one_doc['q2_time'], 2), round(one_doc['q3_time'], 2), round(one_doc['max_time'], 2))).ljust(37),
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
                     int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44),
                 uri))
@@ -200,7 +200,7 @@ def text_abstract(text, what):
 def specific_base_pipeline(what, uri_type, text):
     """为specific_uri_summary函数提供通用的pipeline
     what: 'hits' or 'bytes' or 'time'
-    uri_type: uri or request_uri
+    uri_type: `uri`(without args) or `request_uri`(with args)
     text: text content
     """
     # 定义一个mongodb aggregate操作pipeline的模板
@@ -219,71 +219,97 @@ def specific_base_pipeline(what, uri_type, text):
             uri_abs = text_abstract(text.split('?', 1)[0], 'uri')
             args_abs = text_abstract(text.split('?', 1)[1], 'args')
         except IndexError:
-            '''-u 后跟随一个不含参数的uri会触发该异常'''
-            print('  Warning: full original request URI must contain a "?"')
-            exit(12)
+            uri_abs = text_abstract(text, 'uri')
+            args_abs = None
         additional_condition = base_condition(
             arguments['--server'], arguments['--from'], arguments['--to'], uri_abs, args_abs)
-        sum_ = '$requests.args.' + what
-        pipeline.insert(0, {'$project': {'requests.uri_abs': 1, 'requests.args': 1}})
-        pipeline.insert(2, {'$unwind': '$requests.args'})
-        pipeline.insert(3, additional_condition)
-    # 修改aggregate操作$sum字段
-    pipeline[-1]['$group'][what]['$sum'] = sum_
-    return {'pipeline': pipeline, 'uri_abs': uri_abs, 'args_abs': args_abs}
+        if args_abs:
+            sum_ = '$requests.args.' + what
+            pipeline.insert(0, {'$project': {'requests.uri_abs': 1, 'requests.args': 1}})
+            pipeline.insert(2, {'$unwind': '$requests.args'})
+            pipeline.insert(3, additional_condition)
+            # 修改aggregate操作$sum字段
+            pipeline[-1]['$group'][what]['$sum'] = sum_
+            pipeline[-1]['$group']['q1_time'] = {'$avg': '$requests.args.q1_time'}
+            pipeline[-1]['$group']['q2_time'] = {'$avg': '$requests.args.q2_time'}
+            pipeline[-1]['$group']['q3_time'] = {'$avg': '$requests.args.q3_time'}
+            pipeline[-1]['$group']['max_time'] = {'$avg': '$requests.args.max_time'}
+            pipeline[-1]['$group']['q1_bytes'] = {'$avg': '$requests.args.q1_bytes'}
+            pipeline[-1]['$group']['q2_bytes'] = {'$avg': '$requests.args.q2_bytes'}
+            pipeline[-1]['$group']['q3_bytes'] = {'$avg': '$requests.args.q3_bytes'}
+            pipeline[-1]['$group']['max_bytes'] = {'$avg': '$requests.args.max_bytes'}
+            # print('have args:', pipeline)  #debug
+            return {'pipeline': pipeline, 'uri_abs': uri_abs, 'args_abs': args_abs}
+        else:
+            sum_ = '$requests.' + what
+            pipeline.insert(0, {'$project': {'requests.uri_abs': 1, 'requests.hits': 1,  'requests.bytes': 1,
+                                             'requests.q1_time': 1, 'requests.q2_time': 1, 'requests.q3_time': 1, 'requests.max_time': 1,
+                                             'requests.q1_bytes': 1, 'requests.q2_bytes': 1, 'requests.q3_bytes': 1, 'requests.max_bytes': 1}})
+            pipeline.insert(2, additional_condition)
+            pipeline[-1]['$group'][what]['$sum'] = sum_
+            pipeline[-1]['$group']['q1_time'] = {'$avg': '$requests.q1_time'}
+            pipeline[-1]['$group']['q2_time'] = {'$avg': '$requests.q2_time'}
+            pipeline[-1]['$group']['q3_time'] = {'$avg': '$requests.q3_time'}
+            pipeline[-1]['$group']['max_time'] = {'$avg': '$requests.max_time'}
+            pipeline[-1]['$group']['q1_bytes'] = {'$avg': '$requests.q1_bytes'}
+            pipeline[-1]['$group']['q2_bytes'] = {'$avg': '$requests.q2_bytes'}
+            pipeline[-1]['$group']['q3_bytes'] = {'$avg': '$requests.q3_bytes'}
+            pipeline[-1]['$group']['max_bytes'] = {'$avg': '$requests.max_bytes'}
+            # print('not have args',pipeline)  #debug
+            return {'pipeline': pipeline, 'uri_abs': uri_abs}
 
 
 # @timer
 def specific_uri_summary(uri_type, how, text, group_by, limit):
     """指定的uri/request_uri在给定时间段内的分布
-    uri_type: uri or request_uri
+    uri_type: uri`(without args) or `request_uri`(with args)
     how: distribution or detail
     text: text content
     group_by: 取样粒度, 分钟/十分钟/小时/天"""
     # 根据指定的汇总粒度, 决定aggregate操作中$group条件的_id列
-    if group_by == 'ten_min':
+    if group_by == 'minute':
+        group_id = {'$substrBytes': ['$_id', 0, 10]}
+    elif group_by == 'ten_min':
         group_id = {'$substrBytes': ['$_id', 0, 9]}
-    elif group_by == 'hour':
-        group_id = {'$substrBytes': ['$_id', 0, 8]}
     elif group_by == 'day':
         group_id = {'$substrBytes': ['$_id', 0, 6]}
-    else:  # group_by == 'min':  默认为分
-        group_id = {'$substrBytes': ['$_id', 0, 10]}
+    else:
+        # 默认 group_by == 'hour'
+        group_id = {'$substrBytes': ['$_id', 0, 8]}
 
-    pipeline_hits = specific_base_pipeline('hits', uri_type, text)['pipeline']
+    uri_args_dict = specific_base_pipeline('hits', uri_type, text)  # 为了获取uri_abs和args_abs
+    pipeline_hits = uri_args_dict['pipeline']
     pipeline_bytes = specific_base_pipeline('bytes', uri_type, text)['pipeline']
     pipeline_time = specific_base_pipeline('time', uri_type, text)['pipeline']
 
     try:
-        # 指定uri在指定条件下的总hits/bytes/time
+        # 指定uri在指定条件下的总hits/bytes
         total_hits = mongo_col.aggregate(pipeline_hits).next()['hits']
         total_bytes = mongo_col.aggregate(pipeline_bytes).next()['bytes']
-        total_time = mongo_col.aggregate(pipeline_time).next()['time']
     except StopIteration:
         print('  Warning: there is no record in the condition you specified')
         exit(13)
 
-    uri_args_dict = specific_base_pipeline('hits', uri_type, text)  # 为了获取uri_abs和args_abs
     if uri_type is None:
         print('=' * 20)  # 表头
     if uri_type == 'uri':
         print('{}\nuri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs']))  # 表头
     elif uri_type == 'request_uri':
-        print('{}\nrequest_uri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs'] + ' + ' + uri_args_dict['args_abs']))  # 表头
-    print('Total hits: {}    Total bytes: {}    Avg_time: {}\n{}'
-          ''.format(total_hits, get_human_size(total_bytes), format(total_time/total_hits, '.3f'), '=' * 20))
+        if 'args_abs' in uri_args_dict:
+            print('{}\nrequest_uri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs'] + ' + ' + uri_args_dict['args_abs']))  # 表头
+        else:
+            print('{}\nrequest_uri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs']))  # 表头
+    print('Total hits: {}    Total bytes: {}\n{}'.format(total_hits, get_human_size(total_bytes), '=' * 20))
     if not how or how == 'distribution':
-        print('{}  {}  {}  {}  {}  {}'.format((group_by if group_by else 'min').rjust(10),
-                                              'hits'.rjust(10), 'hits_percent'.rjust(10),
-                                              'bytes'.rjust(10), 'bytes_percent'.rjust(10),
-                                              'avg_time'.rjust(10)))
+        '''展示request_uri(with args or don't have args)按照指定period做group聚合的结果'''
+        print('{}  {}  {}  {}  {}  {}  {}'.format((group_by if group_by else 'hour').rjust(10),
+              'hits'.rjust(10), 'hits_percent'.rjust(10), 'bytes'.rjust(10), 'bytes_percent'.rjust(10),
+              'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(44)))
         # 修改aggregate操作 $group字段
         pipeline_hits[-1]['$group']['_id'] = group_id
         pipeline_bytes[-1]['$group']['_id'] = group_id
-        pipeline_time[-1]['$group']['_id'] = group_id
-        # print(pipeline_hits)  #debug
-        # print(pipeline_bytes)  #debug
-        # print(pipeline_time)  #debug
+        # print('pipeline_hits:', pipeline_hits)  #debug
+        # print('pipeline_bytes:', pipeline_bytes)  #debug
         result_hits = sorted(mongo_col.aggregate(pipeline_hits), key=lambda x: x['_id'])  # 按_id列排序,即按时间从小到大输出
         result_bytes = mongo_col.aggregate(pipeline_bytes)
         result_time = mongo_col.aggregate(pipeline_time)
@@ -301,13 +327,15 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
             date = one_doc['_id']
             hits = one_doc['hits']
             # print('date: {}    result_time_dict[date]: {}'.format(date, result_time_dict[date]))  # debug
-            print('{}  {}  {}%  {}  {}%  {}s'.format(date.rjust(10), str(hits).rjust(10),
-                                                     format(hits / total_hits * 100, '.2f').rjust(11),
-                                                     get_human_size(result_bytes_dict[date]).rjust(10),
-                                                     format(result_bytes_dict[date] / total_bytes * 100, '.2f').rjust(12),
-                                                     format(result_time_dict[date] / hits, '.3f').rjust(9)))
+            print('{}  {}  {}%  {}  {}%  {}  {}'.format(date.rjust(10), str(hits).rjust(10),
+                  format(hits / total_hits * 100, '.2f').rjust(11), get_human_size(result_bytes_dict[date]).rjust(10),
+                  format(result_bytes_dict[date] / total_bytes * 100, '.2f').rjust(12),
+                  format('%25<{} %50<{} %75<{} %100<{}'.format(
+                    round(one_doc['q1_time'], 2), round(one_doc['q2_time'], 2), round(one_doc['q3_time'], 2), round(one_doc['max_time'], 2))).ljust(37),
+                  format('%25<{} %50<{} %75<{} %100<{}'.format(
+                    int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44)))
     else:
-        '''显示指定uri的args点击情况,即--detail'''
+        '''展示uri的各args点击情况,即--detail'''
         print('{}  {}  {}  {}  {}  args_abs'.format('hits'.rjust(10), 'hits_percent'.rjust(10),
                                                     'bytes'.rjust(10), 'bytes_percent'.rjust(10),
                                                     'avg_time'.rjust(10)))
