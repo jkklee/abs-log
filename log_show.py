@@ -210,10 +210,10 @@ def specific_base_pipeline(what, uri_type, text):
         uri_abs = text_abstract(text, 'uri') if text is not None else None
         args_abs = None
         additional_condition = base_condition(
-            arguments['--server'], arguments['--from'], arguments['--to'], uri_abs, None)
-        sum_ = '$requests.' + what
-        # pipeline.insert(0, {'$project': {'requests.args': 0}})
+            arguments['--server'], arguments['--from'], arguments['--to'], uri_abs)
         pipeline.insert(1, additional_condition)
+        sum_ = '$requests.' + what
+        pipeline[-1]['$group'][what]['$sum'] = sum_
     elif uri_type == 'request_uri':
         try:
             uri_abs = text_abstract(text.split('?', 1)[0], 'uri')
@@ -238,8 +238,7 @@ def specific_base_pipeline(what, uri_type, text):
             pipeline[-1]['$group']['q2_bytes'] = {'$avg': '$requests.args.q2_bytes'}
             pipeline[-1]['$group']['q3_bytes'] = {'$avg': '$requests.args.q3_bytes'}
             pipeline[-1]['$group']['max_bytes'] = {'$avg': '$requests.args.max_bytes'}
-            # print('have args:', pipeline)  #debug
-            return {'pipeline': pipeline, 'uri_abs': uri_abs, 'args_abs': args_abs}
+            # print('have args:', pipeline)  # debug
         else:
             sum_ = '$requests.' + what
             pipeline.insert(0, {'$project': {'requests.uri_abs': 1, 'requests.hits': 1,  'requests.bytes': 1,
@@ -255,8 +254,8 @@ def specific_base_pipeline(what, uri_type, text):
             pipeline[-1]['$group']['q2_bytes'] = {'$avg': '$requests.q2_bytes'}
             pipeline[-1]['$group']['q3_bytes'] = {'$avg': '$requests.q3_bytes'}
             pipeline[-1]['$group']['max_bytes'] = {'$avg': '$requests.max_bytes'}
-            # print('not have args',pipeline)  #debug
-            return {'pipeline': pipeline, 'uri_abs': uri_abs}
+            # print('not have args', pipeline)  # debug
+    return {'pipeline': pipeline, 'uri_abs': uri_abs, 'args_abs': args_abs}
 
 
 # @timer
@@ -265,7 +264,7 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
     uri_type: uri`(without args) or `request_uri`(with args)
     how: distribution or detail
     text: text content
-    group_by: 取样粒度, 分钟/十分钟/小时/天"""
+    group_by: 聚合粒度, 分钟/十分钟/小时/天"""
     # 根据指定的汇总粒度, 决定aggregate操作中$group条件的_id列
     if group_by == 'minute':
         group_id = {'$substrBytes': ['$_id', 0, 10]}
@@ -273,8 +272,7 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
         group_id = {'$substrBytes': ['$_id', 0, 9]}
     elif group_by == 'day':
         group_id = {'$substrBytes': ['$_id', 0, 6]}
-    else:
-        # 默认 group_by == 'hour'
+    else:  # 默认 group_by = 'hour'
         group_id = {'$substrBytes': ['$_id', 0, 8]}
 
     uri_args_dict = specific_base_pipeline('hits', uri_type, text)  # 为了获取uri_abs和args_abs
@@ -283,9 +281,10 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
     pipeline_time = specific_base_pipeline('time', uri_type, text)['pipeline']
 
     try:
-        # 指定uri在指定条件下的总hits/bytes
+        # 指定uri在指定条件下的总hits/bytes/time
         total_hits = mongo_col.aggregate(pipeline_hits).next()['hits']
         total_bytes = mongo_col.aggregate(pipeline_bytes).next()['bytes']
+        total_time = mongo_col.aggregate(pipeline_time).next()['time']
     except StopIteration:
         print('  Warning: there is no record in the condition you specified')
         exit(13)
@@ -295,21 +294,22 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
     if uri_type == 'uri':
         print('{}\nuri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs']))  # 表头
     elif uri_type == 'request_uri':
-        if 'args_abs' in uri_args_dict:
+        if uri_args_dict['args_abs']:
             print('{}\nrequest_uri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs'] + ' + ' + uri_args_dict['args_abs']))  # 表头
         else:
             print('{}\nrequest_uri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs']))  # 表头
     print('Total hits: {}    Total bytes: {}\n{}'.format(total_hits, get_human_size(total_bytes), '=' * 20))
+
     if not how or how == 'distribution':
         '''展示request_uri(with args or don't have args)按照指定period做group聚合的结果'''
         print('{}  {}  {}  {}  {}  {}  {}'.format((group_by if group_by else 'hour').rjust(10),
-              'hits'.rjust(10), 'hits_percent'.rjust(10), 'bytes'.rjust(10), 'bytes_percent'.rjust(10),
+              'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(8),
               'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(44)))
         # 修改aggregate操作 $group字段
         pipeline_hits[-1]['$group']['_id'] = group_id
         pipeline_bytes[-1]['$group']['_id'] = group_id
-        # print('pipeline_hits:', pipeline_hits)  #debug
-        # print('pipeline_bytes:', pipeline_bytes)  #debug
+        # print('pipeline_hits:', pipeline_hits)  # debug
+        # print('pipeline_bytes:', pipeline_bytes)  # debug
         result_hits = sorted(mongo_col.aggregate(pipeline_hits), key=lambda x: x['_id'])  # 按_id列排序,即按时间从小到大输出
         result_bytes = mongo_col.aggregate(pipeline_bytes)
         result_time = mongo_col.aggregate(pipeline_time)
@@ -328,27 +328,35 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
             hits = one_doc['hits']
             # print('date: {}    result_time_dict[date]: {}'.format(date, result_time_dict[date]))  # debug
             print('{}  {}  {}%  {}  {}%  {}  {}'.format(date.rjust(10), str(hits).rjust(10),
-                  format(hits / total_hits * 100, '.2f').rjust(11), get_human_size(result_bytes_dict[date]).rjust(10),
-                  format(result_bytes_dict[date] / total_bytes * 100, '.2f').rjust(12),
+                  format(hits / total_hits * 100, '.2f').rjust(6), get_human_size(result_bytes_dict[date]).rjust(10),
+                  format(result_bytes_dict[date] / total_bytes * 100, '.2f').rjust(7),
                   format('%25<{} %50<{} %75<{} %100<{}'.format(
                     round(one_doc['q1_time'], 2), round(one_doc['q2_time'], 2), round(one_doc['q3_time'], 2), round(one_doc['max_time'], 2))).ljust(37),
                   format('%25<{} %50<{} %75<{} %100<{}'.format(
                     int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44)))
     else:
         '''展示uri的各args点击情况,即--detail'''
-        print('{}  {}  {}  {}  {}  args_abs'.format('hits'.rjust(10), 'hits_percent'.rjust(10),
-                                                    'bytes'.rjust(10), 'bytes_percent'.rjust(10),
-                                                    'avg_time'.rjust(10)))
+        print('{}  {}  {}  {}  {}  {}  {}  args_abs'.format('hits'.rjust(8), 'hits(%)'.rjust(7), 'bytes'.rjust(9),
+              'bytes(%)'.rjust(8), 'time(%)'.rjust(7), 'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(40)))
         pipeline_hits.insert(1, {'$unwind': '$requests.args'})
         pipeline_hits[-1]['$group']['_id'] = '$requests.args.args_abs'
         pipeline_hits[-1]['$group']['hits']['$sum'] = '$requests.args.hits'
+
         pipeline_bytes.insert(1, {'$unwind': '$requests.args'})
         pipeline_bytes[-1]['$group']['_id'] = '$requests.args.args_abs'
         pipeline_bytes[-1]['$group']['bytes']['$sum'] = '$requests.args.bytes'
+        pipeline_bytes[-1]['$group']['q1_bytes'] = {'$avg': '$requests.args.q1_bytes'}
+        pipeline_bytes[-1]['$group']['q2_bytes'] = {'$avg': '$requests.args.q2_bytes'}
+        pipeline_bytes[-1]['$group']['q3_bytes'] = {'$avg': '$requests.args.q3_bytes'}
+        pipeline_bytes[-1]['$group']['max_bytes'] = {'$avg': '$requests.args.max_bytes'}
+
         pipeline_time.insert(1, {'$unwind': '$requests.args'})
         pipeline_time[-1]['$group']['_id'] = '$requests.args.args_abs'
         pipeline_time[-1]['$group']['time']['$sum'] = '$requests.args.time'
-
+        pipeline_time[-1]['$group']['q1_time'] = {'$avg': '$requests.args.q1_time'}
+        pipeline_time[-1]['$group']['q2_time'] = {'$avg': '$requests.args.q2_time'}
+        pipeline_time[-1]['$group']['q3_time'] = {'$avg': '$requests.args.q3_time'}
+        pipeline_time[-1]['$group']['max_time'] = {'$avg': '$requests.args.max_time'}
         # print('pipeline_hits: {}'.format(pipeline_hits))  # debug
         # print('pipeline_bytes: {}'.format(pipeline_bytes))  # debug
         # print('pipeline_time: {}'.format(pipeline_time))  # debug
@@ -360,21 +368,33 @@ def specific_uri_summary(uri_type, how, text, group_by, limit):
         result_bytes_dict = {}
         result_time_dict = {}
         for one_doc in result_bytes:
-            result_bytes_dict[one_doc['_id']] = one_doc['bytes']
+            result_bytes_dict.setdefault(one_doc['_id'], {})
+            result_bytes_dict[one_doc['_id']]['bytes'] = one_doc['bytes']
+            result_bytes_dict[one_doc['_id']]['q1_bytes'] = one_doc['q1_bytes']
+            result_bytes_dict[one_doc['_id']]['q2_bytes'] = one_doc['q2_bytes']
+            result_bytes_dict[one_doc['_id']]['q3_bytes'] = one_doc['q3_bytes']
+            result_bytes_dict[one_doc['_id']]['max_bytes'] = one_doc['max_bytes']
         for one_doc in result_time:
-            result_time_dict[one_doc['_id']] = one_doc['time']
+            result_time_dict.setdefault(one_doc['_id'], {})
+            result_time_dict[one_doc['_id']]['time'] = one_doc['time']
+            result_time_dict[one_doc['_id']]['q1_time'] = one_doc['q1_time']
+            result_time_dict[one_doc['_id']]['q2_time'] = one_doc['q2_time']
+            result_time_dict[one_doc['_id']]['q3_time'] = one_doc['q3_time']
+            result_time_dict[one_doc['_id']]['max_time'] = one_doc['max_time']
 
         if int(limit):
             result_hits = result_hits[:int(limit)]
         for one_doc in result_hits:
             args = one_doc['_id']
             hits = one_doc['hits']
-            print('{}  {}%  {}  {}%  {}s  {}'.format(str(hits).rjust(10),
-                                                     format(hits / total_hits * 100, '.2f').rjust(11),
-                                                     get_human_size(result_bytes_dict[args]).rjust(10),
-                                                     format(result_bytes_dict[args] / total_bytes * 100, '.2f').rjust(12),
-                                                     format(result_time_dict[args] / hits, '.3f').rjust(9),
-                                                     args if args != '' else '""'))
+            print('{}  {}%  {}  {}%  {}%  {}  {}  {}'.format(
+                str(hits).rjust(8), format(hits / total_hits * 100, '.2f').rjust(6), get_human_size(result_bytes_dict[args]['bytes']).rjust(9),
+                format(result_bytes_dict[args]['bytes'] / total_bytes * 100, '.2f').rjust(7), format(result_time_dict[args]['time'] / total_time * 100, '.2f').rjust(6),
+                format('%25<{} %50<{} %75<{} %100<{}'.format(
+                    round(result_time_dict[args]['q1_time'], 2), round(result_time_dict[args]['q2_time'], 2), round(result_time_dict[args]['q3_time'], 2), round(result_time_dict[args]['max_time'], 2))).ljust(37),
+                format('%25<{} %50<{} %75<{} %100<{}'.format(
+                    int(result_bytes_dict[args]['q1_bytes']), int(result_bytes_dict[args]['q2_bytes']), int(result_bytes_dict[args]['q3_bytes']), int(result_bytes_dict[args]['max_bytes']))).ljust(40),
+                args if args != '' else '""'))
 
 
 # 根据参数执行动作
