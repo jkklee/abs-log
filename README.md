@@ -14,8 +14,6 @@ This tool aim at trouble shooting and performance optimization based on web logs
 3. 对 request_uri 进行抽象处理，分为uri_abs和args_abs两部分，以实现对uri和uri中包含的args进行归类分析
 4. 展示界面对归类的 uri 或 args 从`请求数`、`响应大小`、`响应时间`三个维度进行展示，哪些请求数量多、那些请求耗时多、哪些请求耗流量一目了然
 5. 引入了4分位数的概念以实现对`响应时间`和`响应大小`更准确的描述，因为对于日志中的响应时间，算数平均值的参考意义不大
-6. 接近实时的数据展示(视log_analyse.py的运行频率而定)
-6. 较为方便配置的日志格式设置（需要对正则有一定了解）
  
 ### 实现思路：
 分析脚本（`log_analyse.py`）部署到各台 web server，并通过crontab设置定时运行。`log_analyse.py`利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`server name` 等信息存储进MongoDB。查看脚本（`log_show.py`）作为一个总入口即可对所有web server的日志进行分析查看，至于实时性，取决于web server上`log_analyse.py`脚本的执行频率。
