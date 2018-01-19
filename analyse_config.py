@@ -1,5 +1,5 @@
 # ----日志格式
-# 利用非贪婪匹配和分组匹配, 需要严格参照日志定义中的分隔符和引号
+# 利用非贪婪匹配和分组匹配, 需要严格参照日志定义中的分隔符和引号(编写正则时，先不要换行，确保空格或引号与日志格式一致，最后考虑美观可以折行)
 log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?) \+0800\] "(?P<request>.*?)"' \
               r' (?P<status>.*?) (?P<body_bytes_sent>.*?) (?P<request_time>.*?)' \
               r' "(?P<http_referer>.*?)" "(?P<http_user_agent>.*?)" - (?P<http_x_forwarded_for>.*)$'
