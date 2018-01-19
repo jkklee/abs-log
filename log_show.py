@@ -21,12 +21,11 @@ Options:
   Notice: <request_uri> should inside quotation marks
 """
 
+from common_func import text_abstract, get_human_size, time
+from analyse_config import mongo_host
 import pymongo
-import time
-import re
-from sys import exit, argv
+from sys import exit
 from docopt import docopt
-from functools import wraps
 
 arguments = docopt(__doc__)
 # print(arguments)  #debug
@@ -36,25 +35,12 @@ if arguments['--group_by'] not in ('minute', 'ten_min', 'hour', 'day'):
     exit(10)
 
 today = time.strftime('%y%m%d', time.localtime())  # 今天日期,取两位年份
-mongo_client = pymongo.MongoClient('192.168.1.2')
+mongo_client = pymongo.MongoClient(mongo_host)
 mongo_db = mongo_client[arguments['<site_name>']]
 # mongodb中每天一个集合, 选定要查询的集合
 mongo_col = mongo_db[arguments['--from'][:6]] if arguments['--from'] else mongo_db[today]
 
 
-def timer(func):
-    """测量函数执行时间的装饰器"""
-    @wraps(func)
-    def inner_func(*args, **kwargs):
-        t0 = time.time()
-        result_ = func(*args, **kwargs)
-        t1 = time.time()
-        print("Time running %s: %s seconds" % (func.__name__, str(t1 - t0)))
-        return result_
-    return inner_func
-
-
-@timer
 def get_collection_list():
     """mongodb中集合是按天分割的,取得指定时间段所包含的mongodb集合"""
     collection_list = []
@@ -66,16 +52,6 @@ def get_collection_list():
     for i in range(to_date - from_date):
         collection_list.append(str(from_date+i))
     return collection_list
-
-
-def get_human_size(n):
-    """返回更可读的size单位"""
-    units = {0: 'B', 1: 'KB', 2: 'MB', 3: 'GB'}
-    i = 0
-    while n//1024 > 0 and i < 3:
-        n = n/1024
-        i += 1
-    return format(n, '.2f') + ' ' + units[i]
 
 
 requests_q4_enable = {'requests.min_time': 1, 'requests.q1_time': 1, 'requests.q2_time': 1, 'requests.q3_time': 1, 'requests.max_time': 1,
@@ -116,7 +92,6 @@ def base_condition(server, start, end, uri_abs, args_abs=None):
     return match
 
 
-# @timer
 def base_summary(what, limit):
     """输出指定时间内集合中所有uri_abs按hits/bytes/times排序
     what: 'hits' or 'bytes' or 'time'
@@ -182,25 +157,6 @@ def base_summary(what, limit):
                 format('%25<{} %50<{} %75<{} %100<{}'.format(
                     int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44),
                 uri))
-
-
-def text_abstract(text, what):
-    """
-    对uri和args进行抽象化,利于分类
-    抽象规则:
-        uri中所有的数字抽象为'?'
-        args中所有参数值抽象为'?'
-    text: 待处理的内容
-    what: uri 或 args
-    """
-    if what == 'uri':
-        step1 = re.sub(r'/[0-9]+\.', r'/?.', text)
-        step2 = re.sub(r'/[0-9]+$', r'/?', step1)
-        while re.search(r'/[0-9]+/', step2):
-            step2 = re.sub(r'/[0-9]+/', r'/?/', step2)
-        return step2
-    elif what == 'args':
-        return re.sub('=[^&=]+', '=?', text)
 
 
 def detail_pipeline(what, text):

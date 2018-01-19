@@ -6,15 +6,15 @@ This script should be put in crontab in every web server.Execute every n minutes
 Collect nginx access log, process it and insert the result into mysql.
 """
 from analyse_config import *
+from common_func import text_abstract, get_median, get_quartile, special_insert, re
 from socket import gethostname
 from urllib.parse import unquote
 from multiprocessing import Pool
 from random import choice
 from os import path, listdir, chdir
 from time import strftime, localtime
-from subprocess import run , PIPE
+from subprocess import run, PIPE
 from sys import exit
-import re
 import fcntl
 import logging
 import pymongo
@@ -92,60 +92,7 @@ def process_line(line_str):
                 'cdn_ip': cdn_ip, 'request_method': request_method, 'request_uri': request_uri}
 
 
-def text_abstract(text, what):
-    """
-    对uri和args进行抽象化,利于分类
-    抽象规则:
-        uri中所有的数字抽象为'?'
-        args中所有参数值抽象为'?'
-    text: 待处理的内容
-    what: uri 或 args
-    """
-    if what == 'uri':
-        step1 = re.sub(r'/[0-9]+\.', r'/?.', text)
-        step2 = re.sub(r'/[0-9]+$', r'/?', step1)
-        while re.search(r'/[0-9]+/', step2):
-            step2 = re.sub(r'/[0-9]+/', r'/?/', step2)
-        return step2
-    if what == 'args':
-        return re.sub('=[^&=]+', '=?', text)
-
-
-def get_median(sorted_data):
-    """获取列表的中位数"""
-    half = len(sorted_data) // 2
-    return (sorted_data[half] + sorted_data[~half]) / 2
-
-
-def get_quartile(data):
-    """获取列表的4分位数(参考盒须图思想,用于体现响应时间和响应大小的分布.)
-    以及min和max值(放到这里主要考虑对排序后数据的尽可能利用)"""
-    data = sorted(data)
-    size = len(data)
-    if size == 1:
-        return data[0], data[0], data[0], data[0], data[0]
-    half = size // 2
-    q1 = get_median(data[:half])
-    q2 = get_median(data)
-    q3 = get_median(data[half + 1:]) if size % 2 == 1 else get_median(data[half:])
-    return data[0], q1, q2, q3, data[-1]
-
-
-def special_insert(arr, v):
-    """list插入过程加入对最大值(index: -1)的维护"""
-    if len(arr) == 1:
-        if v >= arr[0]:
-            arr.append(v)
-        else:
-            arr.insert(0, v)
-    else:
-        if v >= arr[-1]:
-            arr.append(v)
-        else:
-            arr.insert(-1, v)
-
-
-def final_uri_dicts(stage_res):
+def final_uri_dicts(stage_res, log_name, this_h_m):
     """对stage_res里的原始数据进行整合生成每个uri_abs对应的字典,插入到this_minute_doc['request']中, 生成最终存储到mongodb的文档(字典)
     一个uri_abs在this_minute_doc中对应的格式如下"""
     uris = []
@@ -352,7 +299,7 @@ def main(log_name):
                     'total_bytes': stage_res.pop('minute_total_bytes'),
                     'total_time': round(stage_res.pop('minute_total_time'), 3),
                     'requests': []}
-                this_minute_doc['requests'].extend(final_uri_dicts(stage_res))
+                this_minute_doc['requests'].extend(final_uri_dicts(stage_res, log_name, this_h_m))
                 # 执行插入操作(每分钟的最终结果)
                 if not insert_mongo(mongo_db, this_minute_doc, y_m_d, log_name, n-1, y_m_d, server):
                     break
