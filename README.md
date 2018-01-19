@@ -1,156 +1,136 @@
 # web_log_analyse
-This tool aim at trouble shooting and performance optimization based on web logs, it's not a generally said log analyse/statistics solution. It preprocess logs on all web server at a specified period and save the results into mongodb for finally use(with log_show.py)
+This tool aim at trouble shooting and performance optimization based on web logs, it's not a generally said log analyse/statistics solution. It preprocess logs on all web server with a specified period and save the intermediate results into mongodb for finally use(with `log_show.py`)
 
 
-日志分析在web系统中故障排查、性能分析方面有着非常重要的作用。目前，开源的ELK系统是成熟且功能强大的选择。但是部署及学习成本亦然不低，这里我实现了一个方法和功能相对简单但有针对性的实现。另外该脚本的侧重点不是通常的PV，UV等展示，而是短期内提供细粒度（分钟级别，一分钟内的日志做抽象和汇总）的异常定位和性能分析。
+日志分析在web系统中故障排查、性能分析方面有着非常重要的作用。该工具的侧重点不是通常的PV，UV等展示，而是在指定时间段内提供细粒度（最小分钟级别，即一分钟内的日志做**抽象**和**汇总**）的异常定位和性能分析。
 
-##### 先说一下我想实现这个功能的驱动力（痛点）吧：
-我们有不少站点，前边有CDN，原站前面是F5，走到源站的访问总量日均PV约5000w。下面是我们经常面临一些问题：
+**先明确几个术语**：  
+`uri`指请求中不包含参数的部分；`request_uri`指原始的请求，包含参数或者无参数；`args`指请求中的参数部分。（参照[nginx](http://nginx.org/en/docs/http/ngx_http_core_module.html#variables)中的定义）  
+`uri_abs`和`args_abs`是指对uri和args进行抽象处理后的字符串（以便分类）。例如`"/sub/0/100414/4070?channel=ios&version=1.4.5"`经抽象处理转换为`uri_abs: /sub/?/?/?  args_abs: channel=?&version=?`
 
- - CDN回源异常，可能导致我们源站带宽和负载都面临较大的压力。这时需要能快速的定位到是多了哪些回源IP（即CDN节点）或是某个IP的回源量异常，又或是哪些url的回源量异常
- - 在排除了CDN回源问题之后，根据zabbix监控对一些异常的流量或者负载波动按异常时段对比正常时段进行分析，定位到具体的某（几）类url。反馈给开发进行review以及优化
- - 有时zabbix会监控到应用服务器和DB或者缓存服务器之间的流量异常，这种问题一般定位起来是比较麻烦的，甚至波动仅仅是在一两分钟内，这就需要对日志有一个非常细的分析粒度
- - 我们希望能所有的应用服务器能过在本机分析日志（分布式的思想），然后将分析结果汇总到一起以便查看；并且还希望能尽可能的**实时**（将定时任务间隔设置短一些），以便发现问题后能尽快的通过此平台进行分析  
- -  **通用**和**性能**：对于不同的日志格式只需对脚本稍加改动即可分析；因为将日志分析放在应用服务器本机，所以脚本的性能和效率也要有保证，不能影响业务
-
+### 特点
+1. 提供一个日志分析的总入口：经由此入口，可查看某站点所有 server 产生日志的汇总分析；亦可根据`时间段`和`server`两个维度进行过滤
+2. 侧重于以**某一类** uri 或其对应的**各类** args 为维度进行分析（参照3）
+3. 对 request_uri 进行抽象处理，分为uri_abs和args_abs两部分，以实现对uri和uri中包含的args进行归类分析
+4. 展示界面对归类的 uri 或 args 从`请求数`、`响应大小`、`响应时间`三个维度进行展示，哪些请求数量多、那些请求耗时多、哪些请求耗流量一目了然
+5. 引入了4分位数的概念以实现对`响应时间`和`响应大小`更准确的描述，因为对于日志中的响应时间，算数平均值的参考意义不大
+6. 接近实时的数据展示(视log_analyse.py的运行频率而定)
+6. 较为方便配置的日志格式设置（需要对正则有一定了解）
  
 ### 实现思路：
-利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`用户IP`、`CDN ip`、`server name` 等信息存储进MongoDB。这里实现的另一个思想是：“谁的日志谁处理（增量处理）”，将处理结果统一存到一个数据库；查看脚本（`log_show.py`）和数据库在一起，达到在一个入口即可对所有web server的日志进行分析查看的效果，并且达到准实时效果（取决于web server上`log_analyse_parall.py`脚本的执行频率）
+分析脚本（`log_analyse.py`）部署到各台 web server，并通过crontab设置定时运行。`log_analyse.py`利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`server name` 等信息存储进MongoDB。查看脚本（`log_show.py`）作为一个总入口即可对所有web server的日志进行分析查看，至于实时性，取决于web server上`log_analyse.py`脚本的执行频率。
 
-#### 当然前提规范也是必须的：
-
+#### 前提规范：
  - 各台server的日志文件按统一路径存放
- - 日志格式保持一致(代码中规定格式为xxx.access.xxxx)
+ - 日志格式、日志命名规则保持一致(代码中规定格式为xxx.access.log)
  - 每天的0点日志切割
  
-我的nginx日志格式如下(日志格式决定了代码中的正则表达式，是可根据自己情况参考我的正则进行定制的)：
+日志格式决定了代码中的正则表达式，是可根据自己情况参考`analyse_config.py`中的正则定义进行定制的)。项目中预定义的日志格式对应如下：
 ```
 log_format  access  '$remote_addr - [$time_local] "$request" '
              '$status $body_bytes_sent $request_time "$http_referer" '
              '"$http_user_agent" - $http_x_forwarded_for';
-```
-#### 日志分析原理： 
-通过Python的re模块，按照应用服务器的日志格式编写正则，例如按照我的日志格式，写出的正则如下（编写正则时，先不要换行，**确保空格或引号等与日志格式一致**，最后考虑美观可以折行）
-```
-log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?)\] "(?P<request>.*?)"' \
-              r' (?P<status>.*?) (?P<body_bytes_sent>.*?) (?P<request_time>.*?)' \
-              r' "(?P<http_referer>.*?)" "(?P<http_user_agent>.*?)" - (?P<http_x_forwarded_for>.*)$'
-              
-log_pattern_obj = re.compile(log_pattern)
-```
-用以上正则来整体匹配一行日志记录，然后各个部分可以通过`log_pattern_obj.search(log).group('remote_addr')`、`log_pattern_obj.search(log).group('body_bytes_sent')`等形式来访问  
+``` 
+#### 对于其他格式的nginx日志或者Apache日志，按照如上原则，稍作就可以使用该工具分析处理。
 
-#### 对于其他格式的nginx日志或者Apache日志，按照如上原则，都可以轻松的使用该脚本分析处理。
+#### 对于异常日志的处理  
+如果想靠空格或双引号来分割各段的话，主要问题是面对各种不规范的记录时(原因不一而足，而且也是样式繁多)，无法做到将各种异常都考虑在内，所以项目中采用了`re`模块而不是简单的`split()`函数的原因。代码里对一些“可以容忍”的异常记录通过一些判断逻辑予以处理；对于“无法容忍”的异常记录则返回空字符串并将日志记录于文件。  
+其实对于上述的这些不规范的请求，最好的办法是在nginx中定义日志格式时，用一个特殊字符作为分隔符，例如“|”。这样就不需要re模块，直接字符串分割就能正确的获取到各段(性能会好些)。
 
-原理虽简单但实现起来却发现有好多坑，如果想靠空格或双引号来分割各段的话，主要问题是面对各种不规范的记录时(原因不一而足，而且也是样式繁多)，无法做到将各种异常都考虑在内，所以我采用了`re`模块而不是简单的`split()`函数的原因。代码里对一些“可以容忍”的异常记录通过一些判断逻辑予以处理；对于“无法容忍”的异常记录则返回空字符串并将日志记录于文件。
-
-其实对于上述的这些不规范的请求，最好的办法是在nginx中定义日志格式时，用一个特殊字符作为分隔符，例如“|”。这样都不用Python的re模块，直接字符串分割就能正确的获取到各段(性能会好些)。
-
-### 接下来看看使用效果：
+### log_show.py使用说明：
 #### 帮助信息
 ```
 [ljk@demo ~]$ log_show --help
 Usage:
-  log_show <site_name> [options] [(-f <start_time>|-f <start_time> -t <end_time>)] [(-u <uri> [(--distribution|--detail)]|-r <request_uri>)]
+  log_show <site_name> [options]
+  log_show <site_name> [options] distribution <request_uri>
+  log_show <site_name> [options] detail <request_uri>
 
 Options:
-  -h --help                       Show this screen.
-  -f --from <start_time>          Start time.Format: %y%m%d[%H[%M]], %H and %M is optional
-  -t --to <end_time>              End time.Same as --from
-  -l --limit <num>                Number of lines in the output, 0 means no limit. [default: 20]
-  -s --server <server>            Web server hostname
-  -u --uri <uri>                  URI in request, must in a pair of quotes 
-  -r --request_uri <request_uri>  Full original request URI (with arguments), must in a pair of quotes
-  -g --group_by <group_by>        Group by every minute or every ten minutes or every hour or every day
-                                  Valid values: "min", "ten_min", "hour", "day". [default: min]
-  --distribution                  Display result of -u or -r within every period which --group_by specific
-  --detail                        Display detail of args of -u or -r specific
-```
-#### 默认对指定站点今日已入库的数据进行分析，从访问次数、字节数、响应时间三个维度打印出前20（不加-l参数）个uri_abs(经抽象处理的不含参数的uri)
-```
-[ljk@demo ~]$ log_show  -l 5 api
-====================
-Total hits: 13003013
-====================
-      hits       percent    uri_abs
-   2813039        21.63%    /subscribe/?/?/?
-   1480372        11.38%    /chapter/?/?.json
-   1445657        11.12%    /subscribe/read
-   1243056         9.56%    /recommend/update
-   1181373         9.09%    /view/?/?.json
-====================
-Total bytes: 24.16 GB
-====================
-     bytes       percent     avg_bytes    uri_abs
-   4.54 GB        18.77%       4.08 KB    /point/?/?/?.json
-   2.55 GB        10.56%       7.56 KB    /comment/?/?.json
-   2.53 GB        10.47%       9.11 KB    /center/subscribe
-   2.50 GB        10.36%       5.27 KB    /comic/?.json
-   2.25 GB         9.30%       1.59 KB    /chapter/?/?.json
-====================
-Total cum. time: 1802117s
-====================
- cum. time       percent      avg_time    uri_abs
-   472374s        26.21%        0.647s    /comment/topcomment/?/?/?.json
-   407161s        22.59%        2.344s    /old/comment/?/?/?/?.json
-   207505s        11.51%        1.620s    /comment/?/?.json
-   154559s         8.58%        0.437s    /comment/?/?/?/?.json
-    95661s         5.31%        0.034s    /subscribe/?/?/?
-```
-#### 指定时间段内按“分/十分/时/天”为粒度进行统计
-```
-# 默认按分钟分组,默认显示20行, 通过'--limit 0'参数可以显示所有结果。
-# 下面示例展示170630-00时到170630-01时内以每十分钟为粒度的统计
-[ljk@demo ~]$ log_show api  -g ten_min  -f 17063000 -t 17063001
-====================
-Total hits: 229277    Total bytes: 201.35 MB    Avg_time: 0.015
-====================
-   ten_min        hits  hits_percent       bytes  bytes_percent    avg_time
- 170630000       43546        18.99%    38.32 MB         19.03%      0.017s
- 170630001       40676        17.74%    35.68 MB         17.72%      0.019s
- 170630002       39628        17.28%    32.24 MB         16.01%      0.013s
- 170630003       36961        16.12%    33.18 MB         16.48%      0.013s
- 170630004       34466        15.03%    32.37 MB         16.08%      0.013s
- 170630005       34000        14.83%    29.57 MB         14.68%      0.013s
-```
-#### 对指定的uri(without query strings)或request_uri(full uri)在各时间段的各项统计(时间段可按"分/十分/时/天"划分)
-```
-# 默认按分钟分组,默认显示20行, 通过'-l 0'参数可以显示所有结果 
-[ljk@demo ~]$ log_show  -l 5 api -u "/subscribe/?/?/?"
-====================
-uri_abs: /subscribe/?/?/?
-Total hits: 2813039    Total bytes: 107.31 MB    Avg_time: 0.034
-====================
-       min        hits  hits_percent       bytes  bytes_percent    avg_time
-1705270000        7404         0.26%   289.22 KB          0.26%      0.039s
-1705270001        7461         0.27%   291.45 KB          0.27%      0.038s
-1705270002        7333         0.26%   286.45 KB          0.26%      0.038s
-1705270003        7383         0.26%   288.40 KB          0.26%      0.035s
-1705270004        7267         0.26%   283.87 KB          0.26%      0.035s
-```
-#### 对某一uri进行详细分析，查看其不同参数(query_string)的分布汇总
-```
-[ljk@demo ~]$ log_show api -u "/subscribe/?/?/?" --detail
-====================
-uri_abs: /subscribe/?/?/?
-Total hits: 2813039    Total bytes: 107.31 MB    Avg_time: 0.034
-====================
-      hits  hits_percent       bytes  bytes_percent    avg_time  args_abs
-   2141750        76.14%    81.70 MB         76.14%      0.034s  ""
-    671289        23.86%    25.61 MB         23.86%      0.035s  channel=?
-```
-#### Note
-其中`uri_abs`和`args_abs`是对uri和args进行抽象化（抽象出一个模式出来）处理之后的结果。  
- 对uri：将路径中任意一段全部由数字组成的抽象为一个"?"；将文件名出去后缀部分全部由数字组成的部分抽象为一个"?"  
- 对args：将所有的value替换成"？"  
+  -h --help                   Show this screen.
+  -f --from <start_time>      Start time.Format: %y%m%d[%H[%M]], %H and %M is optional
+  -t --to <end_time>          End time.Same as --from
+  -l --limit <num>            Number of lines in output, 0 means no limit. [default: 10]
+  -s --server <server>        Web server hostname
+  -g --group_by <group_by>    Group by every minute, every ten minutes, every hour or every day,
+                              valid values: "minute", "ten_min", "hour", "day". [default: hour]
 
+  distribution                Show distribution(about hits,bytes,time) of request_uri in every period(which --group_by specific)
+  detail                      Display details of args analyse of the request_uri(if it has args)
 
-以上只列举了几个例子，还支持指定时间段内的查询分析。
-基本上除了UA部分（代码中已有捕捉，但是笔者用不到），其他的信息都以包含到表中。因此几乎可以对网站`流量`，`负载`,`响应时间`等方面的任何疑问给出数据上的支持。
+  Notice: <request_uri> should inside quotation marks
+```
 
+#### 默认对指定站点今日已入库的数据进行分析，默认按点击量倒序排序取前10名
+```
+[ljk@demo ~]$ log_show api -l 5
+====================
+Total_hits:999205 invalid_hits:581
+====================
+      hits  percent           time_distribution(s)                     bytes_distribution(B)              uri_abs
+    430210   43.06%  %25<0.01 %50<0.03 %75<0.06 %100<2.82   %25<42 %50<61 %75<63 %100<155                 /api/record/getR
+    183367   18.35%  %25<0.02 %50<0.03 %75<0.06 %100<1.73   %25<34 %50<196 %75<221 %100<344               /api/getR/com/?/?/?
+    102299   10.24%  %25<0.02 %50<0.02 %75<0.05 %100<1.77   %25<3263 %50<3862 %75<3982 %100<4512          /view/?/?/?/?.js
+     62772    6.28%  %25<0.15 %50<0.19 %75<0.55 %100<2.93   %25<2791 %50<3078 %75<3213 %100<11327         /api/getRInfo/com/?/?
+     54947    5.50%  %25<0.03 %50<0.04 %75<0.1 %100<1.96    %25<2549 %50<17296 %75<31054 %100<691666      /api/NewCom/list
+====================
+Total_bytes:1.91 GB
+====================
+     bytes  percent           time_distribution(s)                     bytes_distribution(B)              uri_abs
+   1.23 GB   64.61%  %25<0.03 %50<0.04 %75<0.1 %100<1.96    %25<2549 %50<17296 %75<31054 %100<691666      /api/NewCom/list
+ 319.05 MB   16.32%  %25<0.02 %50<0.02 %75<0.05 %100<1.77   %25<3263 %50<3862 %75<3982 %100<4512          /view/?/?/?/?.js
+ 167.12 MB    8.55%  %25<0.15 %50<0.19 %75<0.55 %100<2.93   %25<2791 %50<3078 %75<3213 %100<11327         /api/getR/com/?/?
+  96.11 MB    4.92%  %25<0.1 %50<0.18 %75<0.42 %100<1.96    %25<5225 %50<13041 %75<32832 %100<172867      /api/view/getView
+  24.77 MB    1.27%  %25<0.01 %50<0.03 %75<0.06 %100<1.82   %25<42 %50<61 %75<63 %100<155                 /api/record/getR
+====================
+Total_time:117048s
+====================
+ cum. time  percent           time_distribution(s)                     bytes_distribution(B)              uri_abs
+     38747   33.10%  %25<0.01 %50<0.03 %75<0.06 %100<2.82   %25<42 %50<61 %75<63 %100<155                 /api/record/getR
+     22092   18.87%  %25<0.02 %50<0.03 %75<0.06 %100<1.73   %25<34 %50<196 %75<221 %100<344               /api/getR/com/?/?/?
+     17959   15.34%  %25<0.15 %50<0.19 %75<0.55 %100<2.93   %25<2791 %50<3078 %75<3213 %100<11327         /api/getRInfo/com/?/?
+     10826    9.25%  %25<0.02 %50<0.02 %75<0.05 %100<1.77   %25<3263 %50<3862 %75<3982 %100<4512          /view/?/?/?/?.js
+      8485    7.25%  %25<0.03 %50<0.04 %75<0.1 %100<1.96    %25<2549 %50<17296 %75<31054 %100<691666      /api/NewCom/list
+```
+可通过`-f`，`-t`，`-s`参数对`起始时间`和`指定server`进行过滤；并通过`-l`参数控制展示条数
 
-### 使用说明：
-该脚本的设计目标是将其放到web server的的计划任务里，定时（例如每30分钟或10分钟，自定义）执行，在需要时通过log_show进行需要的分析即可。  
-`*/30 * * * * export LANG=zh_CN.UTF-8;python3 /root/log_analyse_parall.py &> /tmp/log_analyse.log`
+#### distribution 子命令：对指定uri或request_uri在指定时间段内按“分/十分/时/天”为粒度进行聚合统计
+```
+# 默认按小时分组，默认显示10行
+[ljk@demo ~]$ python log_show.py api distribution "/"
+====================
+request_uri_abs: /
+Total hits: 76    Total bytes: 2.11 KB
+====================
+      hour        hits  hits(%)       bytes  bytes(%)           time_distribution(s)                     bytes_distribution(B)            
+  18011911          16   21.05%    413.00 B    19.16%  %25<0.06 %50<0.06 %75<0.06 %100<0.06   %25<23 %50<26 %75<28 %100<28                
+  18011912          19   25.00%    518.00 B    24.03%  %25<0.02 %50<0.02 %75<0.02 %100<0.02   %25<26 %50<27 %75<28 %100<28                
+  18011913          23   30.26%    700.00 B    32.47%  %25<0.02 %50<0.1 %75<0.18 %100<0.18    %25<29 %50<29 %75<29 %100<29                
+  18011914          18   23.68%    525.00 B    24.35%  %25<0.02 %50<0.02 %75<0.02 %100<0.02   %25<28 %50<29 %75<30 %100<30 
+```
+可通过`-f`，`-t`，`-s`参数对`起始时间`和`指定server`进行过滤；通过`-g`参数指定聚合的粒度（minute/ten_min/hour/day）
 
+#### detail 子命令：对某一uri进行详细分析，查看其不同参数(args)的各项指标分布
+```
+[ljk@demo ~]$ python log_show.py api detail "/view/?/?/?.json"
+====================
+uri_abs: /view/?/?/?.json
+Total hits: 152080    Total bytes: 990.81 MB
+====================
+    hits  hits(%)      bytes  bytes(%)  time(%)           time_distribution(s)                   bytes_distribution(B)            args_abs
+  147109   96.73%  964.98 MB    97.39%   96.84%  %25<0.02 %50<0.03 %75<0.03 %100<0.41   %25<17 %50<1856 %75<7163 %100<296527      channel=?&version=?
+    4971    3.27%   25.83 MB     2.61%    2.42%  %25<0.02 %50<0.03 %75<0.03 %100<0.09   %25<350 %50<2063 %75<6529 %100<68296      ""
+```
+`detail`子命令后跟随uri（不含参数）或uri_abs
+可通过`-f`，`-t`，`-s`参数对`起始时间`和`指定server`进行过滤
+
+### log_analyse.py部署说明：
+该脚本的设计目标是将其放到web server的的计划任务里，定时（例如每30分钟或10分钟，自定义）执行，在需要时通过log_show.py进行分析即可。  
+`*/30 * * * * export LANG=zh_CN.UTF-8;python3 /root/log_analyse.py &> /tmp/log_analyse.log`
+
+### Note
+1. 其中`uri_abs`和`args_abs`是对uri和args进行抽象化（抽象出一个模式出来）处理之后的结果。  
+ **uri**：将路径中任意一段全部由数字组成的抽象为一个"?"；将文件名出去后缀部分全部由数字组成的部分抽象为一个"?"  
+ **args**：将所有的value替换成"？" 
+2. `common_func.py`中还有一些其他有趣的函数
 
