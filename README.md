@@ -92,7 +92,7 @@ Total_time:117048s
 [ljk@demo ~]$ python log_show.py api distribution "/"
 ====================
 request_uri_abs: /
-Total hits: 76    Total bytes: 2.11 KB
+Total_hits: 76    Total_bytes: 2.11 KB
 ====================
       hour        hits  hits(%)       bytes  bytes(%)           time_distribution(s)                     bytes_distribution(B)            
   18011911          16   21.05%    413.00 B    19.16%  %25<0.06 %50<0.06 %75<0.06 %100<0.06   %25<23 %50<26 %75<28 %100<28                
@@ -107,7 +107,7 @@ Total hits: 76    Total bytes: 2.11 KB
 [ljk@demo ~]$ python log_show.py api detail "/view/?/?/?.json"
 ====================
 uri_abs: /view/?/?/?.json
-Total hits: 152080    Total bytes: 990.81 MB
+Total_hits: 152080    Total_bytes: 990.81 MB
 ====================
     hits  hits(%)      bytes  bytes(%)  time(%)           time_distribution(s)                   bytes_distribution(B)            args_abs
   147109   96.73%  964.98 MB    97.39%   96.84%  %25<0.02 %50<0.03 %75<0.03 %100<0.41   %25<17 %50<1856 %75<7163 %100<296527      channel=?&version=?
