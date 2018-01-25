@@ -242,7 +242,7 @@ def distribution(text, groupby, limit):
         print('{}\nrequest_uri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs'] + ' + ' + uri_args_dict['args_abs']))  # 表头
     else:
         print('{}\nrequest_uri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs']))  # 表头
-    print('Total hits: {}    Total bytes: {}\n{}'.format(total_hits, get_human_size(total_bytes), '=' * 20))
+    print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_hits, get_human_size(total_bytes), '=' * 20))
 
     print('{}  {}  {}  {}  {}  {}  {}'.format((groupby if groupby else 'hour').rjust(10),
                                               'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10),
@@ -291,7 +291,7 @@ def detail(text, limit):
         exit(13)
 
     print('{}\nuri_abs: {}'.format('=' * 20, uri_args_dict['uri_abs']))  # 表头
-    print('Total hits: {}    Total bytes: {}\n{}'.format(total_hits, get_human_size(total_bytes), '=' * 20))
+    print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_hits, get_human_size(total_bytes), '=' * 20))
     print('{}  {}  {}  {}  {}  {}  {}  args_abs'.format(
           'hits'.rjust(8), 'hits(%)'.rjust(7), 'bytes'.rjust(9), 'bytes(%)'.rjust(8), 'time(%)'.rjust(7),
           'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(40)))
