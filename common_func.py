@@ -79,3 +79,25 @@ def text_abstract(text, what):
         return re.sub('=[^&=]+', '=?', text)
 
 
+def special_update_dict(dict_obj, key, standby_value=None, sub_type=None, sub_keys=None, sub_values=None):
+    """若key对应的值的类型为非字典类型(数字,字符,列表,元组), 对应第1,2,3个参数
+    若key对应值类型为字典,对应第1,2,4,5,6参数"""
+    if sub_type is None:
+        if key in dict_obj:
+            #print('in    kkkk===={}    vvvv===={}'.format(key, standby_value))
+            dict_obj[key] += standby_value
+        else:
+            #print('not in    kkkk===={}    vvvv===={}'.format(key, standby_value))
+            dict_obj[key] = standby_value
+    elif isinstance(sub_type, dict):
+        if key in dict_obj:
+            for k, v in zip(sub_keys, sub_values):
+                #print('in    kkkk===={}    vvvv===={}'.format(k,v))
+                dict_obj[key][k] += v
+        else:
+            dict_obj[key] = sub_type
+            for k, v in zip(sub_keys, sub_values):
+                #print('not in    kkkk===={}    vvvv===={}'.format(k, v))
+                dict_obj[key][k] = v
+
+

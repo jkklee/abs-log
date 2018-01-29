@@ -120,7 +120,6 @@ def final_uri_dicts(stage_res, log_name, this_h_m):
                            'args': [],
                            'max_time_request': stage_res[uri_k]['max_time_request'],
                            'max_bytes_request': stage_res[uri_k]['max_bytes_request'],
-                           'response_code': stage_res[uri_k]['response_code']}
         if len(uri_v['args']) > MAX_ARG_NUM:
             logger.warning("{}:{} truncate arg_abs reverse sorted by 'hits' from {} to {} at {} due to the "
                            "MAX_ARG_NUM setting".format(log_name, uri_k, len(stage_res), MAX_ARG_NUM, this_h_m))
@@ -143,7 +142,7 @@ def final_uri_dicts(stage_res, log_name, this_h_m):
                                'max_bytes': arg_quartile_bytes[-1],
                                'bytes': sum(arg_v['bytes']),
                                'method': arg_v['method'],
-                               'response_code': stage_res[uri_k]['args'][arg_k]['response_code']}
+                               'error_code': main_stage[uri_k]['args'][arg_k]['error_code']}
             single_uri_dict['args'].append(single_arg_dict)
         uris.append(single_uri_dict)
     return uris
@@ -168,11 +167,6 @@ def append_line_to_stage(line_res, stage_res, line_str):
         special_insert(stage_res[uri_abs]['time'], line_res['request_time'])
         special_insert(stage_res[uri_abs]['bytes'], line_res['bytes_sent'])
         stage_res[uri_abs]['hits'] += 1
-        # http响应码
-        if line_res['response_code'] in stage_res[uri_abs]['response_code']:
-            stage_res[uri_abs]['response_code'][line_res['response_code']] += 1
-        else:
-            stage_res[uri_abs]['response_code'][line_res['response_code']] = 1
     else:
         stage_res[uri_abs] = {'time': [line_res['request_time']],
                               'bytes': [line_res['bytes_sent']],
@@ -194,6 +188,9 @@ def append_line_to_stage(line_res, stage_res, line_str):
             stage_res[uri_abs]['args'][args_abs]['response_code'][line_res['response_code']] += 1
         else:
             stage_res[uri_abs]['args'][args_abs]['response_code'][line_res['response_code']] = 1
+        # http错误码
+        if int(line_res['response_code']) >= 400:
+            special_update_dict(main_stage[uri_abs]['args'][args_abs]['error_code'], line_res['response_code'], 1)
     else:
         stage_res[uri_abs]['args'][args_abs] = {'time': [line_res['request_time']],
                                                 'bytes': [line_res['bytes_sent']],
