@@ -24,5 +24,5 @@ mongo_port = 27017
 MAX_URI_NUM = 100
 MAX_ARG_NUM = 20
 
-# 保存几天的数据(每天一个集合)
+# 保存几天的数据
 LIMIT = 10
