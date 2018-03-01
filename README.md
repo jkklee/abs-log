@@ -40,21 +40,23 @@ log_format  access  '$remote_addr - [$time_local] "$request" '
 ```
 [ljk@demo ~]$ log_show --help
 Usage:
-  log_show <site_name> [options]
-  log_show <site_name> [options] distribution <request_uri>
-  log_show <site_name> [options] detail <request_uri>
+  log_show <site_name> [options] [ip|error_code]
+  log_show <site_name> [options] distribution (request [<request_uri>]|ip <ip>)
+  log_show <site_name> [options] detail (<request_uri>|<ip>)
 
 Options:
   -h --help                   Show this screen.
-  -f --from <start_time>      Start time.Format: %y%m%d[%H[%M]], %H and %M is optional
-  -t --to <end_time>          End time.Same as --from
-  -l --limit <num>            Number of lines in output, 0 means no limit. [default: 10]
+  -f --from <start_time>      Start time. Format: %y%m%d[%H[%M]], %H and %M is optional
+  -t --to <end_time>          End time. Format is same as --from
+  -l --limit <num>            Number of lines in output, 0 means no limit. [default: 5]
   -s --server <server>        Web server hostname
   -g --group_by <group_by>    Group by every minute, every ten minutes, every hour or every day,
                               valid values: "minute", "ten_min", "hour", "day". [default: hour]
 
-  distribution                Show distribution(about hits,bytes,time) of request_uri in every period(which --group_by specific)
-  detail                      Display details of args analyse of the request_uri(if it has args)
+  distribution                Show distribution(about hits,bytes,time) of request_uri in every period,
+                              or distribution of the specific ip in every period. Period is specific by --group_by
+  detail                      Display details of args analyse of the request_uri(if it has args),
+                              or details of the specific ip
 
   Notice: <request_uri> should inside quotation marks
 ```
@@ -89,7 +91,7 @@ Total_time:117048s
 #### distribution 子命令：对指定uri或request_uri在指定时间段内按“分/十分/时/天”为粒度进行聚合统计
 ```
 # 默认按小时分组，默认显示10行
-[ljk@demo ~]$ python log_show.py api distribution "/"
+[ljk@demo ~]$ python log_show.py api distribution request "/"
 ====================
 request_uri_abs: /
 Total_hits: 76    Total_bytes: 2.11 KB
@@ -101,6 +103,7 @@ Total_hits: 76    Total_bytes: 2.11 KB
   18011914          18   23.68%    525.00 B    24.35%  %25<0.02 %50<0.02 %75<0.02 %100<0.02   %25<28 %50<29 %75<30 %100<30 
 ```
 可通过`-f`，`-t`，`-s`参数对`起始时间`和`指定server`进行过滤；通过`-g`参数指定聚合的粒度（minute/ten_min/hour/day）
+`request`子命令后可以跟具体的uri(显示该uri随指定粒度的分布)或不跟uri(显示所有请求随指定粒度的分布)
 
 #### detail 子命令：对某一uri进行详细分析，查看其不同参数(args)的各项指标分布
 ```
