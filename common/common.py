@@ -4,6 +4,7 @@ from analyse_config import mongo_host, mongo_port
 import time
 import re
 import pymongo
+from sys import exit
 
 mongo_client = pymongo.MongoClient(mongo_host, mongo_port, connect=False)
 today = time.strftime('%y%m%d', time.localtime())  # 今天日期,取两位年份
@@ -137,10 +138,11 @@ def base_condition(server, start, end, uri_abs=None, args_abs=None, ip=None):
     return match
 
 
-def total_info(arguments, mongo_col, uri_abs=None, args_abs=None, ip=None):
+def total_info(arguments, mongo_col, match, uri_abs=None, args_abs=None, ip=None):
     """输出指定时间内集合中所有uri_abs按hits/bytes/times排序
     arguments: 用户从log_show界面输入的参数
     mongo_col: 本次操作对应的集合名称
+    match: pipeline中的match条件(base_condition由函数返回)
     """
     pipeline = [{'$group': {'_id': 'null', 'total_hits': {'$sum': '$total_hits'}, 'total_bytes': {'$sum': '$total_bytes'},
                             'total_time': {'$sum': '$total_time'}, 'invalid_hits': {'$sum': '$invalid_hits'}}}]
@@ -148,26 +150,26 @@ def total_info(arguments, mongo_col, uri_abs=None, args_abs=None, ip=None):
     if uri_abs and args_abs:
         pipeline.insert(0, {'$unwind': '$requests'})
         pipeline.insert(1, {'$unwind': '$requests.args'})
-        pipeline.insert(2, base_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs, args_abs=args_abs))
+        pipeline.insert(2, match)
         pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.args.hits'
         pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.args.bytes'
         pipeline[-1]['$group']['total_time']['$sum'] = '$requests.args.time'
 
     elif uri_abs:
         pipeline.insert(0, {'$unwind': '$requests'})
-        pipeline.insert(1, base_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs))
+        pipeline.insert(1, match)
         pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.hits'
         pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.bytes'
         pipeline[-1]['$group']['total_time']['$sum'] = '$requests.time'
     elif ip:
         pipeline.insert(0, {'$unwind': '$requests'})
         pipeline.insert(1, {'$unwind': '$requests.ips'})
-        pipeline.insert(2, base_condition(arguments['--server'], arguments['--from'], arguments['--to'], ip=ip))
+        pipeline.insert(2, match)
         pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.ips.hits'
         pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.ips.bytes'
         pipeline[-1]['$group']['total_time']['$sum'] = '$requests.ips.time'
     else:
-        pipeline.insert(0, base_condition(arguments['--server'], arguments['--from'], arguments['--to']))
+        pipeline.insert(0, match)
     try:
         # 符合条件的总hits/bytes/time/invalid_hits
         return mongo_col.aggregate(pipeline).next()

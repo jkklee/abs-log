@@ -52,7 +52,6 @@ elif arguments['ip']:
 elif arguments['error_code']:
     pass
 else:
-    total_dict = total_info(arguments, mongo_col)
-    base_show.base_summary('hits', int(arguments['--limit']), arguments, mongo_col, total_dict)
-    base_show.base_summary('bytes', int(arguments['--limit']), arguments, mongo_col, total_dict)
-    base_show.base_summary('time', int(arguments['--limit']), arguments, mongo_col, total_dict)
+    base_show.base_summary('hits', int(arguments['--limit']), arguments, mongo_col)
+    base_show.base_summary('bytes', int(arguments['--limit']), arguments, mongo_col)
+    base_show.base_summary('time', int(arguments['--limit']), arguments, mongo_col)

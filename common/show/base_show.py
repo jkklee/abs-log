@@ -1,5 +1,4 @@
 # -*- coding:utf-8 -*-
-from sys import exit
 from common.common import *
 
 requests_q4_enable = {'requests.min_time': 1, 'requests.q1_time': 1, 'requests.q2_time': 1, 'requests.q3_time': 1, 'requests.max_time': 1,
@@ -14,7 +13,7 @@ request_args_q4_group_by = {'q1_time': {'$avg': '$requests.args.q1_time'}, 'q2_t
                             'q3_bytes': {'$avg': '$requests.args.q3_bytes'}, 'max_bytes': {'$avg': '$requests.args.max_bytes'}}
 
 
-def base_summary(what, limit, arguments, mongo_col, total_dict):
+def base_summary(what, limit, arguments, mongo_col):
     """输出指定时间内集合中所有uri_abs按hits/bytes/times排序
     what: 'hits' or 'bytes' or 'time'
     limit: 限制显示多少行(int)
@@ -22,13 +21,14 @@ def base_summary(what, limit, arguments, mongo_col, total_dict):
     mongo_col: 本次操作对应的集合名称
     total_dict: 指定条件内total_hits, total_bytes, total_time, invalid_hits (dict)
     """
+    additional_condition = base_condition(arguments['--server'], arguments['--from'], arguments['--to'])
+    total_dict = total_info(arguments, mongo_col, additional_condition)
+
     pipeline = [{'$project': {'requests.uri_abs': 1, 'requests.' + what: 1}}, {'$unwind': '$requests'},
                 {'$group': {'_id': '$requests.uri_abs', what: {'$sum': '$requests.' + what}}}]
     pipeline[0]['$project'].update(requests_q4_enable)
     pipeline[-1]['$group'].update(request_q4_group_by)
-    additional_condition = base_condition(arguments['--server'], arguments['--from'], arguments['--to'])
     pipeline.insert(0, additional_condition)
-
     # 限制条数时，$sort + $limit 可以减少mongodb内部的操作量，若不限制显示条数，此步的mongodb内部排序将无必要
     if limit:
         pipeline.extend([{'$sort': {what: -1}}, {'$limit': limit}])
@@ -71,15 +71,17 @@ def base_summary(what, limit, arguments, mongo_col, total_dict):
                     int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44), uri))
 
 
-def distribution_pipeline(groupby, arguments, uri_abs=None, args_abs=None):
+def distribution_pipeline(groupby, arguments, mongo_col, uri_abs=None, args_abs=None):
     """为 distribution 函数提供pipeline
     groupby: 聚合周期(minute, ten_min, hour, day)
     arguments: docopt解析用户从log_show界面输入的参数而来的dict
+    mongo_col: 本次操作对应的集合名称
     """
+    additional_condition = base_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs, args_abs=args_abs)
+    total_dict = total_info(arguments, mongo_col, additional_condition, uri_abs=uri_abs, args_abs=args_abs)
     group_id = group_by_func(groupby)
     # 定义一个mongodb aggregate操作pipeline的模板
     pipeline = [{'$unwind': '$requests'}, {'$group': {'_id': group_id, 'hits': {'$sum': '$requests.hits'}, 'bytes': {'$sum': '$requests.bytes'}}}]
-    additional_condition = base_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs, args_abs=args_abs)
 
     if uri_abs and args_abs:
         pipeline.insert(0, {'$project': {'requests.uri_abs': 1, 'requests.args': 1}})
@@ -97,7 +99,7 @@ def distribution_pipeline(groupby, arguments, uri_abs=None, args_abs=None):
         pipeline.insert(2, additional_condition)
         pipeline[-1]['$group'].update(request_q4_group_by)
         # print('not have args', pipeline)  # debug
-    return pipeline
+    return pipeline, total_dict
 
 
 def distribution(text, groupby, limit, mongo_col, arguments):
@@ -116,7 +118,7 @@ def distribution(text, groupby, limit, mongo_col, arguments):
     else:
         uri_abs = None
         args_abs = None
-    pipeline = distribution_pipeline(groupby, arguments, uri_abs=uri_abs, args_abs=args_abs)
+    pipeline, total_dict = distribution_pipeline(groupby, arguments, mongo_col, uri_abs=uri_abs, args_abs=args_abs)
 
     if uri_abs and args_abs:
         print('{0}\nuri_abs: {1}  args_abs: {2}'.format('=' * 20, uri_abs, args_abs))  # 表头
@@ -124,8 +126,6 @@ def distribution(text, groupby, limit, mongo_col, arguments):
         print('{0}\nuri_abs: {1}'.format('=' * 20, uri_abs))  # 表头
     else:
         print('=' * 20)  # 表头
-    # 指定uri在指定条件下的总hits/bytes(放到这里是为了让total_info函数的报错能输出到合适的地方)
-    total_dict = total_info(arguments, mongo_col, uri_abs=uri_abs, args_abs=args_abs)
     print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
     print('{}  {}  {}  {}  {}  {}  {}'.format((groupby if groupby else 'hour').rjust(10),
                                               'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(8),
@@ -149,16 +149,18 @@ def distribution(text, groupby, limit, mongo_col, arguments):
                      int(one_doc['q1_bytes']), int(one_doc['q2_bytes']), int(one_doc['q3_bytes']), int(one_doc['max_bytes']))).ljust(44)))
 
 
-def detail_pipeline(arguments, uri_abs):
+def detail_pipeline(arguments, mongo_col, uri_abs):
     """为 detail 函数提供pipeline
     arguments: docopt解析用户从log_show界面输入的参数而来的dict
+    mongo_col: 本次操作对应的集合名称
     uri_abs: 经抽象之后的uri
     """
+    additional_condition = base_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs)
+    total_dict = total_info(arguments, mongo_col, additional_condition, uri_abs=uri_abs)
     # 定义一个mongodb aggregate操作pipeline的模板
     pipeline = [{'$unwind': '$requests'}, {'$unwind': '$requests.args'}]
-    additional_condition = base_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs)
     pipeline.insert(2, additional_condition)
-    return pipeline
+    return pipeline, total_dict
 
 
 def detail(text, limit, mongo_col, arguments):
@@ -171,31 +173,22 @@ def detail(text, limit, mongo_col, arguments):
         uri_abs = text_abstract(text.split('?', 1)[0], 'uri')
     except IndexError:
         uri_abs = text_abstract(text, 'uri')
-    total_dict = total_info(arguments, mongo_col, uri_abs=uri_abs)
-    # print(total_dict)  # debug
-    total_hits = total_dict['total_hits']
-    total_bytes = total_dict['total_bytes']
-    total_time = total_dict['total_time']
+
+    pipeline_hits, total_dict = detail_pipeline(arguments, mongo_col, uri_abs)
+    pipeline_bytes = detail_pipeline(arguments, mongo_col, uri_abs)[0]
+    pipeline_time = detail_pipeline(arguments, mongo_col, uri_abs)[0]
+    pipeline_hits.append({'$group': {'_id': '$requests.args.args_abs', 'hits': {'$sum': '$requests.args.hits'}}})
+    pipeline_bytes.append({'$group': {'_id': '$requests.args.args_abs', 'bytes': {'$sum': '$requests.args.bytes'}}})
+    pipeline_bytes[-1]['$group'].update(request_args_q4_group_by)
+    pipeline_time.append({'$group': {'_id': '$requests.args.args_abs', 'time': {'$sum': '$requests.args.time'}}})
+    pipeline_time[-1]['$group'].update(request_args_q4_group_by)
+    # print('pipeline_hits: {}\n pipeline_bytes: {}\n pipeline_time: {}\n'.format(pipeline_hits,pipeline_bytes,pipeline_time))  # debug
 
     print('{}\nuri_abs: {}'.format('=' * 20, uri_abs))  # 表头
-    print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_hits, get_human_size(total_bytes), '=' * 20))
+    print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
     print('{}  {}  {}  {}  {}  {}  {}  args_abs'.format(
           'hits'.rjust(8), 'hits(%)'.rjust(7), 'bytes'.rjust(9), 'bytes(%)'.rjust(8), 'time(%)'.rjust(7),
           'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(40)))
-
-    pipeline_hits = detail_pipeline(arguments, uri_abs)
-    pipeline_bytes = detail_pipeline(arguments, uri_abs)
-    pipeline_time = detail_pipeline(arguments, uri_abs)
-    pipeline_hits.append({'$group': {'_id': '$requests.args.args_abs', 'hits': {'$sum': '$requests.args.hits'}}})
-
-    pipeline_bytes.append({'$group': {'_id': '$requests.args.args_abs', 'bytes': {'$sum': '$requests.args.bytes'}}})
-    pipeline_bytes[-1]['$group'].update(request_args_q4_group_by)
-
-    pipeline_time.append({'$group': {'_id': '$requests.args.args_abs', 'time': {'$sum': '$requests.args.time'}}})
-    pipeline_time[-1]['$group'].update(request_args_q4_group_by)
-    # print('pipeline_hits: {}\n'.format(pipeline_hits))  # debug
-    # print('pipeline_bytes: {}\n'.format(pipeline_bytes))  # debug
-    # print('pipeline_time: {}\n'.format(pipeline_time))  # debug
 
     result_hits = sorted(mongo_col.aggregate(pipeline_hits), key=lambda x: x['hits'], reverse=True)  # 按args的点击数排序
     result_bytes = mongo_col.aggregate(pipeline_bytes)
@@ -224,10 +217,10 @@ def detail(text, limit, mongo_col, arguments):
         args = one_doc['_id']
         hits = one_doc['hits']
         print('{}  {}%  {}  {}%  {}%  {}  {}  {}'.format(
-            str(hits).rjust(8), format(hits / total_hits * 100, '.2f').rjust(6),
+            str(hits).rjust(8), format(hits / total_dict['total_hits'] * 100, '.2f').rjust(6),
             get_human_size(result_bytes_dict[args]['bytes']).rjust(9),
-            format(result_bytes_dict[args]['bytes'] / total_bytes * 100, '.2f').rjust(7),
-            format(result_time_dict[args]['time'] / total_time * 100, '.2f').rjust(6),
+            format(result_bytes_dict[args]['bytes'] / total_dict['total_bytes'] * 100, '.2f').rjust(7),
+            format(result_time_dict[args]['time'] / total_dict['total_time'] * 100, '.2f').rjust(6),
             format('%25<{} %50<{} %75<{} %100<{}'.format(
                 round(result_time_dict[args]['q1_time'], 2), round(result_time_dict[args]['q2_time'], 2),
                 round(result_time_dict[args]['q3_time'], 2), round(result_time_dict[args]['max_time'], 2))).ljust(37),
