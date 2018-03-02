@@ -133,8 +133,9 @@ Total_hits: 10069    Total_bytes: 7.62 MB
 
 ### log_analyse.py部署说明：
 该脚本的设计目标是将其放到web server的的计划任务里，定时（例如每30分钟或10分钟，自定义）执行，在需要时通过log_show.py进行分析即可。
-`*/30 * * * * export LANG=zh_CN.UTF-8;python3 /root/log_analyse.py &> /tmp/log_analyse.log`
-
+```
+*/30 * * * * export LANG=zh_CN.UTF-8;python3 /root/log_analyse.py &> /tmp/log_analyse.log
+```
 
 ### Note
 1. 其中`uri_abs`和`args_abs`是对uri和args进行抽象化（抽象出一个模式出来）处理之后的结果。  
