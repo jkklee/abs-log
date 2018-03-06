@@ -30,7 +30,7 @@ from common.common import mongo_client, match_condition, total_info
 from common.show import base_show, ip_show
 
 arguments = docopt(__doc__)
-print(arguments)  #debug
+# print(arguments)  #debug
 # 判断--group_by合理性
 if arguments['--group_by'] not in ('minute', 'ten_min', 'hour', 'day'):
     print("  Warning: --group_by must be one of {'minute', 'ten_min', 'hour', 'day'}")
@@ -59,8 +59,10 @@ elif arguments['detail'] and arguments['error']:
 
 elif arguments['ip']:
     total_dict = total_info(mongo_col, base_match)
-    ip_show.ip_base_summary('user_ip_via_cdn', int(arguments['--limit']), mongo_col, base_match, total_dict)
-    print('To be implement...')
+    ip_show.base_summary('last_cdn_ip', int(arguments['--limit']), mongo_col, base_match, total_dict)
+    ip_show.base_summary('user_ip_via_cdn', int(arguments['--limit']), mongo_col, base_match, total_dict)
+    ip_show.base_summary('user_ip_via_proxy', int(arguments['--limit']), mongo_col, base_match, total_dict)
+    ip_show.base_summary('remote_addr', int(arguments['--limit']), mongo_col, base_match, total_dict)
 elif arguments['error']:
     print('To be implement...')
 

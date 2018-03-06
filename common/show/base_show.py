@@ -33,6 +33,7 @@ def base_summary(what, limit, mongo_col, match, total_dict):
     # pymongo.command_cursor.CommandCursor 对象无法保留结果中的顺序，故而需要python再做一次排序，并存进list对象
     mongo_result = sorted(mongo_result, key=lambda x: x[what], reverse=True)
 
+    # 打印表头
     if what == 'hits':
         print('{0}\nTotal_{1}:{2} invalid_hits:{3}\n{0}'.format('=' * 20, what, total_dict['total_hits'], total_dict['invalid_hits']))
         print('{}  {}  {}  {}  {}'.format('hits'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(44), 'uri_abs'))
@@ -42,6 +43,7 @@ def base_summary(what, limit, mongo_col, match, total_dict):
     elif what == 'time':
         print('{0}\nTotal_{1}:{2}s\n{0}'.format('=' * 20, what, format(total_dict['total_time'], '.0f')))
         print('{}  {}  {}  {}  {}'.format('cum. time'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(44), 'uri_abs'))
+    # 打印结果
     for one_doc in mongo_result:
         uri = one_doc['_id']
         value = one_doc[what]
@@ -117,12 +119,13 @@ def distribution(text, groupby, limit, mongo_col, arguments):
     total_dict = total_info(mongo_col, match, uri_abs=uri_abs, args_abs=args_abs)
     pipeline = distribution_pipeline(groupby, match, uri_abs, args_abs)
 
+    # 打印表头
     if uri_abs and args_abs:
-        print('{0}\nuri_abs: {1}  args_abs: {2}'.format('=' * 20, uri_abs, args_abs))  # 表头
+        print('{0}\nuri_abs: {1}  args_abs: {2}'.format('=' * 20, uri_abs, args_abs))
     elif uri_abs:
-        print('{0}\nuri_abs: {1}'.format('=' * 20, uri_abs))  # 表头
+        print('{0}\nuri_abs: {1}'.format('=' * 20, uri_abs))
     else:
-        print('=' * 20)  # 表头
+        print('=' * 20)
     print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
     print('{}  {}  {}  {}  {}  {}  {}'.format((groupby if groupby else 'hour').rjust(10),
                                               'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(8),
@@ -132,7 +135,7 @@ def distribution(text, groupby, limit, mongo_col, arguments):
     # print("stage_ret['pipeline']:", stage_ret['pipeline'])  # debug
     dist_res = mongo_col.aggregate(pipeline)
     dist_res = sorted(dist_res, key=lambda x: x['_id'])  # 按_id列排序,即按时间从小到大输出
-
+    # 打印结果
     for one_doc in dist_res:
         hits = one_doc['hits']
         bytes_ = one_doc['bytes']
@@ -176,7 +179,8 @@ def detail(text, limit, mongo_col, arguments):
     pipeline = detail_pipeline(match)
     # print('pipeline:', pipeline)  # debug
 
-    print('{}\nuri_abs: {}'.format('=' * 20, uri_abs))  # 表头
+    # 打印表头
+    print('{}\nuri_abs: {}'.format('=' * 20, uri_abs))
     print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
     print('{}  {}  {}  {}  {}  {}  {}  args_abs'.format(
           'hits'.rjust(8), 'hits(%)'.rjust(7), 'bytes'.rjust(9), 'bytes(%)'.rjust(8), 'time(%)'.rjust(7),
@@ -185,7 +189,7 @@ def detail(text, limit, mongo_col, arguments):
     mongo_result = sorted(mongo_col.aggregate(pipeline), key=lambda x: x['hits'], reverse=True)  # 按args的点击数排序
     if limit:
         mongo_result = mongo_result[:limit]
-
+    # 打印结果
     for one_doc in mongo_result:
         args = one_doc['_id']
         print('{}  {}%  {}  {}%  {}%  {}  {}  {}'.format(
