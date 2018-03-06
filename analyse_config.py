@@ -24,6 +24,8 @@ mongo_port = 27017
 # 为了使mongodb数据集尽量小, 每分钟统计结果中, 只取点击数前MAX_URI_NUM的uri, 每个uri中点击数前MAX_ARG_NUM的args进行入库
 MAX_URI_NUM = 100
 MAX_ARG_NUM = 20
+# ip统计, 每分钟统计结果中, 取点击数前MAX_IP_NUM的ip
+MAX_IP_NUM = 30
 
 # 保存几天的数据
 LIMIT = 10
