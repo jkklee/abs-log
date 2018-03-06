@@ -141,38 +141,38 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
                                'error_code': main_stage[uri_k]['args'][arg_k]['error_code']}
             single_uri_dict['args'].append(single_arg_dict)
 
-        if len(uri_v['user_ip_via_cdn']) > MAX_ARG_NUM:
+        if len(uri_v['user_ip_via_cdn']) > MAX_IP_NUM:
             logger.warning("{}:{} truncate user_ip_via_cdn reverse sorted by 'hits' from {} to {} at {}".format(
-                log_name, uri_k, len(main_stage[uri_k]['user_ip_via_cdn']), MAX_ARG_NUM, this_h_m))
-        for ip_k, ip_v in sorted(uri_v['user_ip_via_cdn'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_ARG_NUM]:
-            '''取点击量前MAX_ARG_NUM的user_ip_via_cdn'''
+                log_name, uri_k, len(main_stage[uri_k]['user_ip_via_cdn']), MAX_IP_NUM, this_h_m))
+        for ip_k, ip_v in sorted(uri_v['user_ip_via_cdn'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_IP_NUM]:
+            '''取点击量前MAX_IP_NUM的user_ip_via_cdn'''
             single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3), 'bytes': ip_v['bytes'], 'type': 'user_ip_via_cdn'}
             single_uri_dict['ips'].append(single_ip_dict)
         del uri_v['user_ip_via_cdn']
 
-        if len(uri_v['last_cdn_ip']) > MAX_ARG_NUM:
+        if len(uri_v['last_cdn_ip']) > MAX_IP_NUM:
             logger.warning("{}:{} truncate last_cdn_ip reverse sorted by 'hits' from {} to {} at {}".format(
-                log_name, uri_k, len(main_stage[uri_k]['last_cdn_ip']), MAX_ARG_NUM, this_h_m))
-        for ip_k, ip_v in sorted(uri_v['last_cdn_ip'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_ARG_NUM]:
-            '''取点击量前MAX_ARG_NUM的last_cdn_ip'''
+                log_name, uri_k, len(main_stage[uri_k]['last_cdn_ip']), MAX_IP_NUM, this_h_m))
+        for ip_k, ip_v in sorted(uri_v['last_cdn_ip'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_IP_NUM]:
+            '''取点击量前MAX_IP_NUM的last_cdn_ip'''
             single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3), 'bytes': ip_v['bytes'], 'type': 'last_cdn_ip'}
             single_uri_dict['ips'].append(single_ip_dict)
         del uri_v['last_cdn_ip']
 
-        if len(uri_v['user_ip_via_proxy']) > MAX_ARG_NUM:
+        if len(uri_v['user_ip_via_proxy']) > MAX_IP_NUM:
             logger.warning("{}:{} truncate user_ip_via_proxy reverse sorted by 'hits' from {} to {} at {}".format(
-                log_name, uri_k, len(main_stage[uri_k]['user_ip_via_proxy']), MAX_ARG_NUM, this_h_m))
-        for ip_k, ip_v in sorted(uri_v['user_ip_via_proxy'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_ARG_NUM]:
-            '''取点击量前MAX_ARG_NUM的user_ip_via_proxy'''
+                log_name, uri_k, len(main_stage[uri_k]['user_ip_via_proxy']), MAX_IP_NUM, this_h_m))
+        for ip_k, ip_v in sorted(uri_v['user_ip_via_proxy'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_IP_NUM]:
+            '''取点击量前MAX_IP_NUM的user_ip_via_proxy'''
             single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3), 'bytes': ip_v['bytes'], 'type': 'user_ip_via_proxy'}
             single_uri_dict['ips'].append(single_ip_dict)
         del uri_v['user_ip_via_proxy']
 
-        if len(uri_v['remote_addr']) > MAX_ARG_NUM:
+        if len(uri_v['remote_addr']) > MAX_IP_NUM:
             logger.warning("{}:{} truncate remote_addr reverse sorted by 'hits' from {} to {} at {}".format(
-                log_name, uri_k, len(main_stage[uri_k]['remote_addr']), MAX_ARG_NUM, this_h_m))
-        for ip_k, ip_v in sorted(uri_v['remote_addr'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_ARG_NUM]:
-            '''取点击量前MAX_ARG_NUM的remote_addr'''
+                log_name, uri_k, len(main_stage[uri_k]['remote_addr']), MAX_IP_NUM, this_h_m))
+        for ip_k, ip_v in sorted(uri_v['remote_addr'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_IP_NUM]:
+            '''取点击量前MAX_IP_NUM的remote_addr'''
             single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3), 'bytes': ip_v['bytes'], 'type': 'remote_addr'}
             single_uri_dict['ips'].append(single_ip_dict)
         del uri_v['remote_addr']
@@ -203,8 +203,6 @@ def append_line_to_main_stage(line_res, main_stage):
                                'last_cdn_ip': {},
                                'user_ip_via_proxy': {},
                                'remote_addr': {}}
-    main_stage['minute_total_bytes'] += line_res['bytes_sent']
-    main_stage['minute_total_time'] += line_res['request_time']
 
     # 将args数据汇总到临时字典
     if args_abs in main_stage[uri_abs]['args']:
@@ -223,16 +221,25 @@ def append_line_to_main_stage(line_res, main_stage):
     # 将ip信息汇总到临时字典
     if user_ip != '-' and user_ip != last_cdn_ip:
         '''come from cdn'''
+        main_stage['source']['from_cdn']['hits'] += 1
+        main_stage['source']['from_cdn']['bytes'] += line_res['bytes_sent']
+        main_stage['source']['from_cdn']['time'] += line_res['request_time']
         special_update_dict(main_stage[uri_abs]['user_ip_via_cdn'], user_ip, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
                             sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
         special_update_dict(main_stage[uri_abs]['last_cdn_ip'], last_cdn_ip, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
                             sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
     elif user_ip != '-' and user_ip == last_cdn_ip:
         '''come from reverse_proxy'''
+        main_stage['source']['from_reverse_proxy']['hits'] += 1
+        main_stage['source']['from_reverse_proxy']['bytes'] += line_res['bytes_sent']
+        main_stage['source']['from_reverse_proxy']['time'] += line_res['request_time']
         special_update_dict(main_stage[uri_abs]['user_ip_via_proxy'], user_ip, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
                             sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
     elif user_ip == '-' and user_ip == last_cdn_ip:
         '''come from user directly'''
+        main_stage['source']['from_client_directly']['hits'] += 1
+        main_stage['source']['from_client_directly']['bytes'] += line_res['bytes_sent']
+        main_stage['source']['from_client_directly']['time'] += line_res['request_time']
         special_update_dict(main_stage[uri_abs]['remote_addr'], remote_addr, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
                             sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
         
@@ -290,8 +297,10 @@ def del_old_data(l_name, h_m):
 def main(log_name):
     """log_name:日志文件名"""
     invalid = 0  # 无效的请求数
-    main_stage = {'minute_total_bytes': 0, 'minute_total_time': 0}  # 存储处理过程中用于保存一分钟内的各项原始数据
-    # 下面3个变量用于生成mongodb的_id
+    # main_stage存储处理过程中用于保存一分钟内的各项原始数据
+    main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
+                             'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
+                             'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
     # 当前处理的一分钟(亦即mongodb文档_id键的一部分,初始为''),格式: 0101(1时1分).(对日志数据以分钟为粒度进行处理分析)
     this_h_m = ''
     # mongodb 中的库名
@@ -331,20 +340,23 @@ def main(log_name):
                     '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
                     'total_hits': processed_num,
                     'invalid_hits': invalid,
-                    'total_bytes': main_stage.pop('minute_total_bytes'),
-                    'total_time': round(main_stage.pop('minute_total_time'), 3),
-                    'requests': []}
+                    'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
+                    'total_time': round(main_stage['source']['from_cdn']['time'] + main_stage['source']['from_reverse_proxy']['time'] + main_stage['source']['from_client_directly']['time'], 3),
+                    'requests': [],
+                    'source': main_stage.pop('source')}  # 此处必须用pop，以保证下一行中引用的main_stage只包含以uri_abs为key的结构
                 minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
 
                 # 执行插入操作(每分钟的最终结果)
                 insert_mongo(mongo_db, minute_main_doc, 'main', log_name, n, y_m_d, server)
                 # 清空临时字典main_stage和invalid
                 processed_num = 0
-                main_stage = {'minute_total_bytes': 0, 'minute_total_time': 0}
+                main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
+                                         'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
+                                         'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
                 invalid = 0
                 logger.info('{} processed to {}'.format(log_name, line_res['time_local']))
 
-            append_line_to_main_stage(line_res, main_stage)
+            # 不到分钟粒度交替时:
             # 以下3行用于生成mongodb中文档的_id
             d_m_y = date.split('/')
             y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
@@ -352,6 +364,8 @@ def main(log_name):
             if y_m_d != today:
                 logger.error("{}: not today's log, exit".format(log_name))
                 break
+            # 调用append_line_to_main_stage函数处理每一行
+            append_line_to_main_stage(line_res, main_stage)
 
         # 对最后一部分未能满足分钟交替条件的日志进行处理
         if processed_num > 0:
@@ -359,9 +373,10 @@ def main(log_name):
                 '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
                 'total_hits': processed_num,
                 'invalid_hits': invalid,
-                'total_bytes': main_stage.pop('minute_total_bytes'),
-                'total_time': round(main_stage.pop('minute_total_time'), 3),
-                'requests': []}
+                'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
+                'total_time': round(main_stage['source']['from_cdn']['time'] + main_stage['source']['from_reverse_proxy']['time'] + main_stage['source']['from_client_directly']['time'], 3),
+                'requests': [],
+                'source': main_stage.pop('source')}
             minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
             insert_mongo(mongo_db, minute_main_doc, 'main', log_name, n, y_m_d, server)
 

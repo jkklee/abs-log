@@ -112,15 +112,15 @@ def get_human_size(n):
     return format(n, '.2f') + ' ' + units[i]
 
 
-def base_condition(server, start, end, uri_abs=None, args_abs=None, ip=None):
-    """额外的 server或 起始时间 条件. 返回一个mongodb中aggregate操作的$match条件
+def match_condition(server, start, end, uri_abs=None, args_abs=None, ip=None):
+    """根据指定条件返回mongodb中aggregate操作pipeline中的$match
     用$and操作符，方便对$match条件进行增减
     server: 显示来自该server的日志
     start: 开始时间
     end: 结束时间
     uri_abs: 经过抽象的uri
-    args_abs: 经过抽象的args"""
-    # print('uri_abs:', uri_abs, 'args_abs:', args_abs)  # debug
+    args_abs: 经过抽象的args
+    ip: 特定的ip地址"""
     if start and end:
         match = {'$match': {'$and': [{'_id': {'$gte': start}}, {'_id': {'$lt': end}}]}}
     elif start and not end:
@@ -138,11 +138,10 @@ def base_condition(server, start, end, uri_abs=None, args_abs=None, ip=None):
     return match
 
 
-def total_info(arguments, mongo_col, match, uri_abs=None, args_abs=None, ip=None):
-    """输出指定时间内集合中所有uri_abs按hits/bytes/times排序
-    arguments: 用户从log_show界面输入的参数
+def total_info(mongo_col, match, uri_abs=None, args_abs=None, ip=None):
+    """返回指定条件内的hits/bytes/time总量
     mongo_col: 本次操作对应的集合名称
-    match: pipeline中的match条件(base_condition由函数返回)
+    match: pipeline中的match条件(match_condition由函数返回)
     """
     pipeline = [{'$group': {'_id': 'null', 'total_hits': {'$sum': '$total_hits'}, 'total_bytes': {'$sum': '$total_bytes'},
                             'total_time': {'$sum': '$total_time'}, 'invalid_hits': {'$sum': '$invalid_hits'}}}]
