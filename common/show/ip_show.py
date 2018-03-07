@@ -7,9 +7,10 @@ def base_summary(ip_type, limit, mongo_col, match, total_dict):
     ip_type: ip类型, 'user_ip_via_cdn', 'last_cdn_ip', 'user_ip_via_proxy', 'remote_addr'
     limit: 对每个独立ip的点击数(hits)进行倒序排列，取limit行
     mongo_col: 本次操作对应的集合名称
+    match: common.match_condition()返回的过滤条件字典
     total_dict: 指定条件内total_hits, total_bytes, total_time, invalid_hits (dict)
     """
-    pipeline = [{'$project': {'requests.ips': 1}}, {'$unwind': '$requests'}, {'$unwind': '$requests.ips'},
+    pipeline = [match['basic_match'], {'$project': {'requests.ips': 1}}, {'$unwind': '$requests'}, {'$unwind': '$requests.ips'},
                 {'$match': {'$and': [{'requests.ips.type': ip_type}]}},
                 {'$group': {'_id': '$requests.ips.ip', 'hits': {'$sum': '$requests.ips.hits'},
                             'bytes': {'$sum': '$requests.ips.bytes'}, 'time': {'$sum': '$requests.ips.time'}}}]
@@ -17,8 +18,7 @@ def base_summary(ip_type, limit, mongo_col, match, total_dict):
                                            'hits': {'$sum': '$source.{}.hits'.format(source)},
                                            'bytes': {'$sum': '$source.{}.bytes'.format(source)},
                                            'time': {'$sum': '$source.{}.time'.format(source)}}}]
-    pipeline.insert(0, match)
-    # print('---pipeline---:\n', pipeline)  # debug
+    # print('base_summary pipeline:\n', pipeline)  # debug
     # 限制条数时，$sort + $limit 可以减少mongodb内部的操作量，若不限制显示条数，此步的mongodb内部排序将无必要
     if limit:
         pipeline.extend([{'$sort': {'hits': -1}}, {'$limit': limit}])

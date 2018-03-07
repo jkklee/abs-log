@@ -21,14 +21,15 @@ def base_summary(what, limit, mongo_col, match, total_dict):
     match: 起止时间和指定server(最基本的过滤条件)
     total_dict: 指定条件内total_hits, total_bytes, total_time, invalid_hits (dict)
     """
-    pipeline = [{'$project': {'requests.uri_abs': 1, 'requests.' + what: 1}}, {'$unwind': '$requests'},
+    pipeline = [match['basic_match'], {'$project': {'requests.uri_abs': 1, 'requests.' + what: 1}}, {'$unwind': '$requests'},
                 {'$group': {'_id': '$requests.uri_abs', what: {'$sum': '$requests.' + what}}}]
-    pipeline[0]['$project'].update(requests_q4_enable)
+    pipeline[1]['$project'].update(requests_q4_enable)
     pipeline[-1]['$group'].update(request_q4_group_by)
-    pipeline.insert(0, match)
     # 限制条数时，$sort + $limit 可以减少mongodb内部的操作量，若不限制显示条数，此步的mongodb内部排序将无必要
     if limit:
         pipeline.extend([{'$sort': {what: -1}}, {'$limit': limit}])
+    # print('base_summary pipeline:\n', pipeline)  # debug
+
     mongo_result = mongo_col.aggregate(pipeline)
     # pymongo.command_cursor.CommandCursor 对象无法保留结果中的顺序，故而需要python再做一次排序，并存进list对象
     mongo_result = sorted(mongo_result, key=lambda x: x[what], reverse=True)
@@ -77,12 +78,12 @@ def distribution_pipeline(groupby, match, uri_abs=None, args_abs=None):
 
     group_id = group_by_func(groupby)
     # 定义一个mongodb aggregate操作pipeline的模板
-    pipeline = [{'$unwind': '$requests'}, {'$group': {'_id': group_id, 'hits': {'$sum': '$requests.hits'}, 'bytes': {'$sum': '$requests.bytes'}}}]
+    pipeline = [match['basic_match'], {'$unwind': '$requests'}, {'$group': {'_id': group_id, 'hits': {'$sum': '$requests.hits'}, 'bytes': {'$sum': '$requests.bytes'}}}]
 
     if uri_abs and args_abs:
-        pipeline.insert(0, {'$project': {'requests.uri_abs': 1, 'requests.args': 1}})
-        pipeline.insert(2, {'$unwind': '$requests.args'})
-        pipeline.insert(3, match)
+        pipeline.insert(1, {'$project': {'requests.uri_abs': 1, 'requests.args': 1}})
+        pipeline.insert(3, {'$unwind': '$requests.args'})
+        pipeline.insert(4, match['special_match'])
         # 修改aggregate操作$sum字段
         pipeline[-1]['$group']['hits']['$sum'] = '$requests.args.hits'
         pipeline[-1]['$group']['bytes']['$sum'] = '$requests.args.bytes'
@@ -90,9 +91,9 @@ def distribution_pipeline(groupby, match, uri_abs=None, args_abs=None):
         # print('have args:', pipeline)  # debug
     else:
         '''有或无uri_abs均走这套逻辑'''
-        pipeline.insert(0, {'$project': {'requests.uri_abs': 1, 'requests.hits': 1,  'requests.bytes': 1}})
-        pipeline[0]['$project'].update(requests_q4_enable)
-        pipeline.insert(2, match)
+        pipeline.insert(1, {'$project': {'requests.uri_abs': 1, 'requests.hits': 1,  'requests.bytes': 1}})
+        pipeline[1]['$project'].update(requests_q4_enable)
+        pipeline.insert(3, match['special_match'])
         pipeline[-1]['$group'].update(request_q4_group_by)
         # print('not have args', pipeline)  # debug
     return pipeline
@@ -132,7 +133,7 @@ def distribution(text, groupby, limit, mongo_col, arguments):
                                               'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(44)))
     if limit:
         pipeline.extend([{'$sort': {'_id': 1}}, {'$limit': limit}])
-    # print("stage_ret['pipeline']:", stage_ret['pipeline'])  # debug
+    # print("distribution pipeline:\n", pipeline)  # debug
     dist_res = mongo_col.aggregate(pipeline)
     dist_res = sorted(dist_res, key=lambda x: x['_id'])  # 按_id列排序,即按时间从小到大输出
     # 打印结果
@@ -154,11 +155,9 @@ def detail_pipeline(match):
     match: pipeline中的match条件(match_condition由函数返回)
     """
     # 定义一个mongodb aggregate操作pipeline的模板
-    pipeline = [{'$unwind': '$requests'}, {'$unwind': '$requests.args'}]
-    pipeline.insert(2, match)
-    pipeline.append({'$group': {'_id': '$requests.args.args_abs', 'hits': {'$sum': '$requests.args.hits'}}})
-    pipeline[-1]['$group'].update({'bytes': {'$sum': '$requests.args.bytes'}})
-    pipeline[-1]['$group'].update({'time': {'$sum': '$requests.args.time'}})
+    pipeline = [match['basic_match'], {'$project': {'requests.args': 1, 'requests.uri_abs': 1}}, {'$unwind': '$requests'}, {'$unwind': '$requests.args'}]
+    pipeline.append(match['special_match'])
+    pipeline.append({'$group': {'_id': '$requests.args.args_abs', 'hits': {'$sum': '$requests.args.hits'}, 'bytes': {'$sum': '$requests.args.bytes'}, 'time': {'$sum': '$requests.args.time'}}})
     pipeline[-1]['$group'].update(request_args_q4_group_by)
     return pipeline
 
