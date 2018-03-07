@@ -122,20 +122,21 @@ def match_condition(server, start, end, uri_abs=None, args_abs=None, ip=None):
     args_abs: 经过抽象的args
     ip: 特定的ip地址"""
     if start and end:
-        match = {'$match': {'$and': [{'_id': {'$gte': start}}, {'_id': {'$lt': end}}]}}
+        basic_match = {'$match': {'$and': [{'_id': {'$gte': start}}, {'_id': {'$lt': end}}]}}
     elif start and not end:
-        match = {'$match': {'$and': [{'_id': {'$gte': start}}]}}
+        basic_match = {'$match': {'$and': [{'_id': {'$gte': start}}]}}
     else:     # 默认取今天的数据做汇总; 只有end时, 忽略end
-        match = {'$match': {'$and': [{'_id': {'$gte': today}}]}}
+        basic_match = {'$match': {'$and': [{'_id': {'$gte': today}}]}}
     if server:
-        match['$match']['$and'].append({'_id': {'$regex': server + '$'}})
+        basic_match['$match']['$and'].append({'_id': {'$regex': server + '$'}})
+    special_match = {'$match': {}}
     if uri_abs:
-        match['$match']['$and'].append({'requests.uri_abs': uri_abs})
+        special_match['$match']['$and'] = [{'requests.uri_abs': uri_abs}]
     if args_abs:
-        match['$match']['$and'].append({'requests.args.args_abs': args_abs})
+        special_match['$match']['$and'].append({'requests.args.args_abs': args_abs})
     if ip:
-        match['$match']['$and'].append({'requests.ips.ip': ip})
-    return match
+        special_match['$match']['$and'] = [{'requests.ips.ip': ip}]
+    return {'basic_match': basic_match, 'special_match': special_match}
 
 
 def total_info(mongo_col, match, uri_abs=None, args_abs=None, ip=None):
@@ -143,32 +144,29 @@ def total_info(mongo_col, match, uri_abs=None, args_abs=None, ip=None):
     mongo_col: 本次操作对应的集合名称
     match: pipeline中的match条件(match_condition由函数返回)
     """
-    pipeline = [{'$group': {'_id': 'null', 'total_hits': {'$sum': '$total_hits'}, 'total_bytes': {'$sum': '$total_bytes'},
+    pipeline = [match['basic_match'],
+                {'$group': {'_id': 'null', 'total_hits': {'$sum': '$total_hits'}, 'total_bytes': {'$sum': '$total_bytes'},
                             'total_time': {'$sum': '$total_time'}, 'invalid_hits': {'$sum': '$invalid_hits'}}}]
-
     if uri_abs and args_abs:
-        pipeline.insert(0, {'$unwind': '$requests'})
-        pipeline.insert(1, {'$unwind': '$requests.args'})
-        pipeline.insert(2, match)
+        pipeline.insert(1, {'$unwind': '$requests'})
+        pipeline.insert(2, {'$unwind': '$requests.args'})
+        pipeline.insert(3, match['special_match'])
         pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.args.hits'
         pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.args.bytes'
         pipeline[-1]['$group']['total_time']['$sum'] = '$requests.args.time'
-
     elif uri_abs:
-        pipeline.insert(0, {'$unwind': '$requests'})
-        pipeline.insert(1, match)
+        pipeline.insert(1, {'$unwind': '$requests'})
+        pipeline.insert(2, match['special_match'])
         pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.hits'
         pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.bytes'
         pipeline[-1]['$group']['total_time']['$sum'] = '$requests.time'
     elif ip:
-        pipeline.insert(0, {'$unwind': '$requests'})
-        pipeline.insert(1, {'$unwind': '$requests.ips'})
-        pipeline.insert(2, match)
+        pipeline.insert(1, {'$unwind': '$requests'})
+        pipeline.insert(2, {'$unwind': '$requests.ips'})
+        pipeline.insert(3, match['special_match'])
         pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.ips.hits'
         pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.ips.bytes'
         pipeline[-1]['$group']['total_time']['$sum'] = '$requests.ips.time'
-    else:
-        pipeline.insert(0, match)
     try:
         # 符合条件的总hits/bytes/time/invalid_hits
         return mongo_col.aggregate(pipeline).next()
