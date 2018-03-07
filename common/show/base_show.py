@@ -117,16 +117,20 @@ def distribution(text, groupby, limit, mongo_col, arguments):
         args_abs = None
 
     match = match_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs, args_abs=args_abs)
-    total_dict = total_info(mongo_col, match, uri_abs=uri_abs, args_abs=args_abs)
     pipeline = distribution_pipeline(groupby, match, uri_abs, args_abs)
 
     # 打印表头
     if uri_abs and args_abs:
+        total_project = {'$project': {'invalid_hits': 1, 'requests.uri_abs': 1, 'requests.args': 1}}
         print('{0}\nuri_abs: {1}  args_abs: {2}'.format('=' * 20, uri_abs, args_abs))
     elif uri_abs:
+        total_project = {'$project': {'invalid_hits': 1, 'requests.uri_abs': 1, 'requests.hits': 1, 'requests.bytes': 1, 'requests.time': 1}}
         print('{0}\nuri_abs: {1}'.format('=' * 20, uri_abs))
     else:
+        total_project = {'$match': {}}  # 仅占位用
         print('=' * 20)
+
+    total_dict = total_info(mongo_col, match, project=total_project, uri_abs=uri_abs, args_abs=args_abs)
     print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
     print('{}  {}  {}  {}  {}  {}  {}'.format((groupby if groupby else 'hour').rjust(10),
                                               'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(8),
@@ -173,9 +177,9 @@ def detail(text, limit, mongo_col, arguments):
     except IndexError:
         uri_abs = text_abstract(text, 'uri')
 
-    project = {'$project': {'invalid_hits': 1, 'requests.uri_abs': 1, 'requests.hits': 1, 'requests.bytes': 1, 'requests.time': 1}}
+    total_project = {'$project': {'invalid_hits': 1, 'requests.uri_abs': 1, 'requests.hits': 1, 'requests.bytes': 1, 'requests.time': 1}}
     match = match_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs)
-    total_dict = total_info(mongo_col, match, project=project, uri_abs=uri_abs)
+    total_dict = total_info(mongo_col, match, project=total_project, uri_abs=uri_abs)
     pipeline = detail_pipeline(match)
     # print('pipeline:', pipeline)  # debug
 
