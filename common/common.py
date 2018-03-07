@@ -139,31 +139,32 @@ def match_condition(server, start, end, uri_abs=None, args_abs=None, ip=None):
     return {'basic_match': basic_match, 'special_match': special_match}
 
 
-def total_info(mongo_col, match, uri_abs=None, args_abs=None, ip=None):
+def total_info(mongo_col, match, project={'$match': {}}, uri_abs=None, args_abs=None, ip=None):
     """返回指定条件内的hits/bytes/time总量
     mongo_col: 本次操作对应的集合名称
-    match: pipeline中的match条件(match_condition由函数返回)
+    match: pipeline中的match条件(match_condition由函数返回，包含两部分$match)
+    project: pipeline中的$project(目前detail子命令需要),默认值仅用于站位
     """
-    pipeline = [match['basic_match'],
+    pipeline = [match['basic_match'], project,
                 {'$group': {'_id': 'null', 'total_hits': {'$sum': '$total_hits'}, 'total_bytes': {'$sum': '$total_bytes'},
                             'total_time': {'$sum': '$total_time'}, 'invalid_hits': {'$sum': '$invalid_hits'}}}]
     if uri_abs and args_abs:
-        pipeline.insert(1, {'$unwind': '$requests'})
-        pipeline.insert(2, {'$unwind': '$requests.args'})
-        pipeline.insert(3, match['special_match'])
+        pipeline.insert(2, {'$unwind': '$requests'})
+        pipeline.insert(3, {'$unwind': '$requests.args'})
+        pipeline.insert(4, match['special_match'])
         pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.args.hits'
         pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.args.bytes'
         pipeline[-1]['$group']['total_time']['$sum'] = '$requests.args.time'
     elif uri_abs:
-        pipeline.insert(1, {'$unwind': '$requests'})
-        pipeline.insert(2, match['special_match'])
+        pipeline.insert(2, {'$unwind': '$requests'})
+        pipeline.insert(3, match['special_match'])
         pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.hits'
         pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.bytes'
         pipeline[-1]['$group']['total_time']['$sum'] = '$requests.time'
     elif ip:
-        pipeline.insert(1, {'$unwind': '$requests'})
-        pipeline.insert(2, {'$unwind': '$requests.ips'})
-        pipeline.insert(3, match['special_match'])
+        pipeline.insert(2, {'$unwind': '$requests'})
+        pipeline.insert(3, {'$unwind': '$requests.ips'})
+        pipeline.insert(4, match['special_match'])
         pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.ips.hits'
         pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.ips.bytes'
         pipeline[-1]['$group']['total_time']['$sum'] = '$requests.ips.time'

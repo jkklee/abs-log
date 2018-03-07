@@ -173,8 +173,9 @@ def detail(text, limit, mongo_col, arguments):
     except IndexError:
         uri_abs = text_abstract(text, 'uri')
 
+    project = {'$project': {'invalid_hits': 1, 'requests.uri_abs': 1, 'requests.hits': 1, 'requests.bytes': 1, 'requests.time': 1}}
     match = match_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs)
-    total_dict = total_info(mongo_col, match, uri_abs=uri_abs)
+    total_dict = total_info(mongo_col, match, project=project, uri_abs=uri_abs)
     pipeline = detail_pipeline(match)
     # print('pipeline:', pipeline)  # debug
 
