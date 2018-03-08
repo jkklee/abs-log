@@ -34,19 +34,22 @@ def text_abstract(text, what):
     """
     对uri和args进行抽象化,利于分类
     抽象规则:
-        uri中所有的数字抽象为'?'
-        args中所有参数值抽象为'?'
+        uri中所有的连续数字抽象为'*'
+        args中所有参数值抽象为'*'
     text: 待处理的内容
     what: uri 或 args
     """
     if what == 'uri':
-        step1 = re.sub(r'/[0-9]+\.', r'/?.', text)
-        step2 = re.sub(r'/[0-9]+$', r'/?', step1)
+        # 最后一个'/'之后有'.'：若其到'.'之间为连续数字，则抽象为'*'
+        step1 = re.sub(r'/[0-9]+\.', r'/*.', text)
+        # 最后一个'/'之后无'.'：若其之后为连续数字，则抽象为'*'
+        step2 = re.sub(r'/[0-9]+$', r'/*', step1)
+        # 第一个'/'和最后一个'/'之间：若两个'/'之间为连续数字，则抽象为'*'
         while re.search(r'/[0-9]+/', step2):
-            step2 = re.sub(r'/[0-9]+/', r'/?/', step2)
+            step2 = re.sub(r'/[0-9]+/', r'/*/', step2)
         return step2
     elif what == 'args':
-        return re.sub('=[^&=]+', '=?', text)
+        return re.sub('=[^&=]+', '=*', text)
 
 
 def get_median(sorted_data):
