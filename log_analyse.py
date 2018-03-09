@@ -5,10 +5,9 @@ ljk 20161116(update 20170510)
 This script should be put in crontab in every web server.Execute every n minutes.
 Collect nginx access log, process it and insert the result into mysql.
 """
-from analyse_config import *
+from config import *
 from common.common import *
 from socket import gethostname
-from urllib.parse import unquote
 from multiprocessing import Pool
 from random import choice
 from os import path, listdir, chdir
@@ -51,13 +50,8 @@ def process_line(line_str):
         if request_further:
             request_method = request_further.group('request_method')
             request_uri = request_further.group('request_uri')
-            uri_args = request_uri.split('?', 1)
-            # 对uri和args进行urldecode
-            uri = unquote(uri_args[0])
-            args = '' if len(uri_args) == 1 else unquote(uri_args[1])
             # 对uri和args进行抽象化
-            uri_abs = text_abstract(uri, 'uri')
-            args_abs = text_abstract(args, 'args')
+            uri_abs, args_abs = text_abstract(request_uri, site_name)
         else:
             logger.warning('$request abnormal: {}'.format(line_str))
             return
@@ -203,7 +197,6 @@ def append_line_to_main_stage(line_res, main_stage):
                                'last_cdn_ip': {},
                                'user_ip_via_proxy': {},
                                'remote_addr': {}}
-
     # 将args数据汇总到临时字典
     if args_abs in main_stage[uri_abs]['args']:
         main_stage[uri_abs]['args'][args_abs]['time'].append(line_res['request_time'])
@@ -296,6 +289,8 @@ def del_old_data(l_name, h_m):
 
 def main(log_name):
     """log_name:日志文件名"""
+    global site_name
+    site_name = log_name.split('.access')[0]
     invalid = 0  # 无效的请求数
     # main_stage存储处理过程中用于保存一分钟内的各项原始数据
     main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},

@@ -75,7 +75,6 @@ def distribution_pipeline(groupby, match, uri_abs=None, args_abs=None):
     """为 distribution 函数提供pipeline
     match: pipeline中的match条件(match_condition由函数返回)
     """
-
     group_id = group_by_func(groupby)
     # 定义一个mongodb aggregate操作pipeline的模板
     pipeline = [match['basic_match'], {'$unwind': '$requests'}, {'$group': {'_id': group_id, 'hits': {'$sum': '$requests.hits'}, 'bytes': {'$sum': '$requests.bytes'}}}]
@@ -106,12 +105,7 @@ def distribution(text, groupby, limit, mongo_col, arguments):
     mongo_col: 本次操作对应的集合名称
     limit: 限制显示多少行(int)"""
     if text:
-        try:
-            uri_abs = text_abstract(text.split('?', 1)[0], 'uri')
-            args_abs = text_abstract(text.split('?', 1)[1], 'args')
-        except IndexError:
-            uri_abs = text_abstract(text, 'uri')
-            args_abs = None
+        uri_abs, args_abs = text_abstract(text, arguments['<site_name>'])
     else:
         uri_abs = None
         args_abs = None
@@ -172,10 +166,10 @@ def detail(text, limit, mongo_col, arguments):
     limit: 限制显示多少行(int)
     mongo_col: 本次操作对应的集合名称
     arguments: docopt解析用户从log_show界面输入的参数而来的dict"""
-    try:
-        uri_abs = text_abstract(text.split('?', 1)[0], 'uri')
-    except IndexError:
-        uri_abs = text_abstract(text, 'uri')
+    if text:
+        uri_abs = text_abstract(text, arguments['<site_name>'])[0]
+    else:
+        uri_abs = None
 
     total_project = {'$project': {'invalid_hits': 1, 'requests.uri_abs': 1, 'requests.hits': 1, 'requests.bytes': 1, 'requests.time': 1}}
     match = match_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs)

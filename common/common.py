@@ -1,10 +1,11 @@
 # -*- coding:utf-8 -*-
-from functools import wraps
-from analyse_config import mongo_host, mongo_port
+from config import mongo_host, mongo_port, abs_special
+from urllib.parse import unquote
 import time
 import re
 import pymongo
 from sys import exit
+from functools import wraps
 
 mongo_client = pymongo.MongoClient(mongo_host, mongo_port, connect=False)
 today = time.strftime('%y%m%d', time.localtime())  # 今天日期,取两位年份
@@ -30,23 +31,35 @@ month_dict = {'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'May': '05', '
               'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'}
 
 
-def text_abstract(text, what):
+def text_abstract(text, site=None):
     """
     对uri和args进行抽象化,利于分类
-    抽象规则:
-        uri中所有的数字抽象为'?'
-        args中所有参数值抽象为'?'
+    默认规则:
+        uri中若 两个'/'之间 或 '/'和'.'之间 仅为数字则将其抽象为'*'
+        args中所有参数的值抽象为'*'
     text: 待处理的内容
-    what: uri 或 args
+    site: 站点名称
     """
-    if what == 'uri':
-        step1 = re.sub(r'/[0-9]+\.', r'/?.', text)
-        step2 = re.sub(r'/[0-9]+$', r'/?', step1)
-        while re.search(r'/[0-9]+/', step2):
-            step2 = re.sub(r'/[0-9]+/', r'/?/', step2)
-        return step2
-    elif what == 'args':
-        return re.sub('=[^&=]+', '=?', text)
+    uri_args = text.split('?', 1)
+    uri = unquote(uri_args[0])
+    args = '' if len(uri_args) == 1 else unquote(uri_args[1])
+    # 特殊抽象规则
+    if site in abs_special:
+        for uri_pattern in abs_special[site]:
+            if re.search(uri_pattern, uri):
+                if 'uri_replace' in abs_special[site][uri_pattern]:
+                    uri = re.sub(uri_pattern, abs_special[site][uri_pattern]['uri_replace'], uri)
+                if 'arg_replace' in abs_special[site][uri_pattern]:
+                    for arg_pattern in abs_special[site][uri_pattern]['arg_replace']:
+                        if re.search(arg_pattern, args):
+                            args = re.sub(arg_pattern, abs_special[site][uri_pattern]['arg_replace'][arg_pattern], args)
+                        else:
+                            args = re.sub('=[^&=]+', '=*', args)
+                return uri, args
+    # uri默认抽象规则(耗时仅为原逻辑的1/3)
+    for i in re.findall('/[0-9]+(?=[/.]|$)', uri):
+        uri = uri.replace(i, '/*')
+    return uri, re.sub('=[^&=]+', '=*', args)
 
 
 def get_median(sorted_data):
