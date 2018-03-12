@@ -58,7 +58,7 @@ def text_abstract(text, site=None):
                 return uri, args
     # uri默认抽象规则(耗时仅为原逻辑的1/3)
     for i in re.findall('/[0-9]+(?=[/.]|$)', uri):
-        uri = uri.replace(i, '/*')
+        uri = uri.replace(i, '/*', 1)
     return uri, re.sub('=[^&=]+', '=*', args)
 
 
