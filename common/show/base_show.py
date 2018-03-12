@@ -25,9 +25,10 @@ def base_summary(what, limit, mongo_col, match, total_dict):
                 {'$group': {'_id': '$requests.uri_abs', what: {'$sum': '$requests.' + what}}}]
     pipeline[1]['$project'].update(requests_q4_enable)
     pipeline[-1]['$group'].update(request_q4_group_by)
+    pipeline.append({'$sort': {what: -1}})
     # 限制条数时，$sort + $limit 可以减少mongodb内部的操作量，若不限制显示条数，此步的mongodb内部排序将无必要
     if limit:
-        pipeline.extend([{'$sort': {what: -1}}, {'$limit': limit}])
+        pipeline.append({'$limit': limit})
     # print('base_summary pipeline:\n', pipeline)  # debug
 
     mongo_result = mongo_col.aggregate(pipeline)
@@ -95,6 +96,7 @@ def distribution_pipeline(groupby, match, uri_abs=None, args_abs=None):
         pipeline.insert(3, match['special_match'])
         pipeline[-1]['$group'].update(request_q4_group_by)
         # print('not have args', pipeline)  # debug
+    pipeline.append({'$sort': {'_id': 1}})
     return pipeline
 
 
@@ -130,7 +132,7 @@ def distribution(text, groupby, limit, mongo_col, arguments):
                                               'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(8),
                                               'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(44)))
     if limit:
-        pipeline.extend([{'$sort': {'_id': 1}}, {'$limit': limit}])
+        pipeline.append({'$limit': limit})
     # print("distribution pipeline:\n", pipeline)  # debug
     mongo_result = mongo_col.aggregate(pipeline)
     # mongo_result = sorted(mongo_result, key=lambda x: x['_id'])  # 按_id列排序,即按时间从小到大输出
@@ -157,6 +159,7 @@ def detail_pipeline(match):
     pipeline.append(match['special_match'])
     pipeline.append({'$group': {'_id': '$requests.args.args_abs', 'hits': {'$sum': '$requests.args.hits'}, 'bytes': {'$sum': '$requests.args.bytes'}, 'time': {'$sum': '$requests.args.time'}}})
     pipeline[-1]['$group'].update(request_args_q4_group_by)
+    pipeline.append({'$sort': {'hits': -1}})
     return pipeline
 
 
@@ -176,7 +179,7 @@ def detail(text, limit, mongo_col, arguments):
     total_dict = total_info(mongo_col, match, project=total_project, uri_abs=uri_abs)
     pipeline = detail_pipeline(match)
     if limit:
-        pipeline.extend([{'$sort': {'hits': -1}}, {'$limit': limit}])
+        pipeline.append({'$limit': limit})
     # print('pipeline:', pipeline)  # debug
     mongo_result = mongo_col.aggregate(pipeline)
     # mongo_result = sorted(mongo_result, key=lambda x: x['hits'], reverse=True)  # 按args的点击数排序

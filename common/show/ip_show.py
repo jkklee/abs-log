@@ -14,18 +14,18 @@ def base_summary(ip_type, limit, mongo_col, match, total_dict):
     pipeline = [match['basic_match'], {'$project': {'requests.ips': 1}}, {'$unwind': '$requests'}, {'$unwind': '$requests.ips'},
                 {'$match': {'$and': [{'requests.ips.type': ip_type}]}},
                 {'$group': {'_id': '$requests.ips.ip', 'hits': {'$sum': '$requests.ips.hits'},
-                            'bytes': {'$sum': '$requests.ips.bytes'}, 'time': {'$sum': '$requests.ips.time'}}}]  # 待优化，慢在$group阶段
+                            'bytes': {'$sum': '$requests.ips.bytes'}, 'time': {'$sum': '$requests.ips.time'}}}, {'$sort': {'hits': -1}}]  # 待优化，慢在$group阶段
     pipeline_source_func = lambda source: [{'$project': {'source': 1}}, {'$group': {'_id': 'null',
                                            'hits': {'$sum': '$source.{}.hits'.format(source)},
                                            'bytes': {'$sum': '$source.{}.bytes'.format(source)},
                                            'time': {'$sum': '$source.{}.time'.format(source)}}}]
     # 限制条数时，$sort + $limit 可以减少mongodb内部的操作量，若不限制显示条数，此步的mongodb内部排序将无必要
     if limit:
-        pipeline.extend([{'$sort': {'hits': -1}}, {'$limit': limit}])
+        pipeline.append({'$limit': limit})
     # print('base_summary pipeline:\n', pipeline)  # debug
-    mongo_result = mongo_col.aggregate(pipeline)
+    mongo_result = list(mongo_col.aggregate(pipeline))
     # pymongo.command_cursor.CommandCursor 对象无法保留结果中的顺序，故而需要python再做一次排序，并存进list对象
-    # mongo_result = sorted(mongo_result, key=lambda x: x['hits'], reverse=True)
+    # mongo_result = sorted(mongo_result, key=lambda x: x['hits'], reverse=True)  # pymongo (3.4.0)可以保留顺序
     # print('---mongo_result---:\n', mongo_result)  # debug
     if not mongo_result:
         return
@@ -41,7 +41,6 @@ def base_summary(ip_type, limit, mongo_col, match, total_dict):
     elif ip_type == 'remote_addr':
         print('{}\n{}  {}  {}  {}  {}  {}'.format('=' * 20, 'From_client_directly'.ljust(20), 'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(7), 'time(%)'.rjust(7)))
         this_total = mongo_col.aggregate(pipeline_source_func('from_client_directly')).next()
-
     if ip_type != 'user_ip_via_cdn':
         print('{}  {}  {}  {}  {}  {}'.format('=' * 20, str(this_total['hits']).rjust(10),
                                           format(this_total['hits'] / total_dict['total_hits'] * 100, '.2f').rjust(7),
@@ -74,9 +73,9 @@ def distribution(mongo_col, arguments):
     pipeline = [match['basic_match'], {'$project': {'requests.ips': 1}}, {'$unwind': '$requests'}, {'$unwind': '$requests.ips'},
                 {'$match': {'$and': [{'requests.ips.ip': ip}]}},
                 {'$group': {'_id': group_id, 'hits': {'$sum': '$requests.ips.hits'},
-                            'bytes': {'$sum': '$requests.ips.bytes'}, 'time': {'$sum': '$requests.ips.time'}}}]
+                            'bytes': {'$sum': '$requests.ips.bytes'}, 'time': {'$sum': '$requests.ips.time'}}}, {'$sort': {'_id': 1}}]
     if limit:
-        pipeline.extend([{'$sort': {'hits': -1}}, {'$limit': limit}])
+        pipeline.append({'$limit': limit})
     # print('distribution pipeline:\n', pipeline)  # debug
     mongo_result = mongo_col.aggregate(pipeline)
 
@@ -111,9 +110,9 @@ def detail(mongo_col, arguments):
                 {'$unwind': '$requests'}, {'$unwind': '$requests.ips'},
                 {'$match': {'$and': [{'requests.ips.ip': ip}]}},
                 {'$group': {'_id': '$requests.uri_abs', 'hits': {'$sum': '$requests.ips.hits'},
-                            'bytes': {'$sum': '$requests.ips.bytes'}, 'time': {'$sum': '$requests.ips.time'}}}]
+                            'bytes': {'$sum': '$requests.ips.bytes'}, 'time': {'$sum': '$requests.ips.time'}}}, {'$sort': {'hits': -1}}]
     if limit:
-        pipeline.extend([{'$sort': {'hits': -1}}, {'$limit': limit}])
+        pipeline.append({'$limit': limit})
     # print('detail pipeline:\n', pipeline)  # debug
     mongo_result = mongo_col.aggregate(pipeline)
 
