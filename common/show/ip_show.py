@@ -24,7 +24,7 @@ def base_summary(ip_type, limit, mongo_col, match, total_dict):
         pipeline.extend([{'$sort': {'hits': -1}}, {'$limit': limit}])
     mongo_result = mongo_col.aggregate(pipeline)
     # pymongo.command_cursor.CommandCursor 对象无法保留结果中的顺序，故而需要python再做一次排序，并存进list对象
-    mongo_result = sorted(mongo_result, key=lambda x: x['hits'], reverse=True)
+    # mongo_result = sorted(mongo_result, key=lambda x: x['hits'], reverse=True)
     # print('---mongo_result---:\n', mongo_result)  # debug
     if not mongo_result:
         return

@@ -22,7 +22,7 @@ Options:
   detail                      Show details of 'args' analyse of the specific 'uri'(if it has args);
                               or details of 'uri' analyse of the specific 'ip'
 
-  Notice: 'request_uri' and 'uri' and 'ip' is best put in quotation marks.
+  Notice: it's best to put 'request_uri', 'uri' and 'ip' in quotation marks.
 """
 
 from docopt import docopt
