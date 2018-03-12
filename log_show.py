@@ -46,14 +46,14 @@ base_match = match_condition(arguments['--server'], arguments['--from'], argumen
 if arguments['distribution'] and arguments['request']:
     base_show.distribution(arguments['<request>'], arguments['--group_by'], int(arguments['--limit']), mongo_col, arguments)
 elif arguments['distribution'] and arguments['ip']:
-    print('To be implement...')
+    ip_show.distribution(mongo_col, arguments)
 elif arguments['distribution'] and arguments['error']:
     print('To be implement...')
 
 elif arguments['detail'] and arguments['request']:
     base_show.detail(arguments['<uri>'], int(arguments['--limit']), mongo_col, arguments)
 elif arguments['detail'] and arguments['ip']:
-    print('To be implement...')
+    ip_show.detail(mongo_col, arguments)
 elif arguments['detail'] and arguments['error']:
     print('To be implement...')
 
