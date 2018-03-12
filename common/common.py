@@ -35,7 +35,7 @@ def text_abstract(text, site=None):
     """
     对uri和args进行抽象化,利于分类
     默认规则:
-        uri中若 两个'/'之间 或 '/'和'.'之间 仅为数字则将其抽象为'*'
+        uri中若 两个'/'之间 或 '/'和'.'之间仅由"0-9或-或_"组成,则将其抽象为'*'
         args中所有参数的值抽象为'*'
     text: 待处理的内容
     site: 站点名称
@@ -57,7 +57,7 @@ def text_abstract(text, site=None):
                             args = re.sub('=[^&=]+', '=*', args)
                 return uri, args
     # uri默认抽象规则(耗时仅为原逻辑的1/3)
-    for i in re.findall('/[0-9]+(?=[/.]|$)', uri):
+    for i in re.findall('/[0-9_-]+(?=[/.]|$)', uri):
         uri = uri.replace(i, '/*', 1)
     return uri, re.sub('=[^&=]+', '=*', args)
 

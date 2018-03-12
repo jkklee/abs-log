@@ -31,7 +31,7 @@ LIMIT = 10
 # ----uri或args抽象规则
 """
 首先了解默认规则:
-    uri中若 两个'/'之间 或 '/'和'.'之间 仅为数字则将其抽象为'*'
+    uri中若 两个'/'之间 或 '/'和'.'之间仅由"0-9或-或_"组成,则将其抽象为'*'
     args中所有参数的值抽象为'*'
 举例:
     /abc/1.html ----> /abc/*.html
@@ -66,5 +66,4 @@ abs_special = {'api': {r'^/point/([0-9]+)/[0-9]+/[0-9]+\.json':
     将uri '/subscribe/read' 的args 'uid=111&channel=Android&version=2.7.3)' 抽象为 'uid=*channel=Android&version=2.7.3', 而不是默认规则的 'uid=*channel=*&version=*'
 """
 abs_special = {}
-
 
