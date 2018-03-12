@@ -32,7 +32,7 @@ def base_summary(what, limit, mongo_col, match, total_dict):
 
     mongo_result = mongo_col.aggregate(pipeline)
     # pymongo.command_cursor.CommandCursor 对象无法保留结果中的顺序，故而需要python再做一次排序，并存进list对象
-    mongo_result = sorted(mongo_result, key=lambda x: x[what], reverse=True)
+    # mongo_result = sorted(mongo_result, key=lambda x: x[what], reverse=True)
 
     # 打印表头
     if what == 'hits':
@@ -132,10 +132,10 @@ def distribution(text, groupby, limit, mongo_col, arguments):
     if limit:
         pipeline.extend([{'$sort': {'_id': 1}}, {'$limit': limit}])
     # print("distribution pipeline:\n", pipeline)  # debug
-    dist_res = mongo_col.aggregate(pipeline)
-    dist_res = sorted(dist_res, key=lambda x: x['_id'])  # 按_id列排序,即按时间从小到大输出
+    mongo_result = mongo_col.aggregate(pipeline)
+    # mongo_result = sorted(mongo_result, key=lambda x: x['_id'])  # 按_id列排序,即按时间从小到大输出
     # 打印结果
-    for one_doc in dist_res:
+    for one_doc in mongo_result:
         hits = one_doc['hits']
         bytes_ = one_doc['bytes']
         date = one_doc['_id']
@@ -175,7 +175,11 @@ def detail(text, limit, mongo_col, arguments):
     match = match_condition(arguments['--server'], arguments['--from'], arguments['--to'], uri_abs=uri_abs)
     total_dict = total_info(mongo_col, match, project=total_project, uri_abs=uri_abs)
     pipeline = detail_pipeline(match)
+    if limit:
+        pipeline.extend([{'$sort': {'hits': -1}}, {'$limit': limit}])
     # print('pipeline:', pipeline)  # debug
+    mongo_result = mongo_col.aggregate(pipeline)
+    # mongo_result = sorted(mongo_result, key=lambda x: x['hits'], reverse=True)  # 按args的点击数排序
 
     # 打印表头
     print('{}\nuri_abs: {}'.format('=' * 20, uri_abs))
@@ -183,10 +187,6 @@ def detail(text, limit, mongo_col, arguments):
     print('{}  {}  {}  {}  {}  {}  {}  args_abs'.format(
           'hits'.rjust(8), 'hits(%)'.rjust(7), 'bytes'.rjust(9), 'bytes(%)'.rjust(8), 'time(%)'.rjust(7),
           'time_distribution(s)'.center(37), 'bytes_distribution(B)'.center(40)))
-
-    mongo_result = sorted(mongo_col.aggregate(pipeline), key=lambda x: x['hits'], reverse=True)  # 按args的点击数排序
-    if limit:
-        mongo_result = mongo_result[:limit]
     # 打印结果
     for one_doc in mongo_result:
         args = one_doc['_id']
