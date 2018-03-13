@@ -18,7 +18,7 @@ import logging
 
 logging.basicConfig(format='%(asctime)s %(levelname)8s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 logger = logging.getLogger(__name__)
-logger.setLevel('DEBUG')
+logger.setLevel('INFO')
 
 
 def my_connect(db_name):
@@ -237,24 +237,19 @@ def append_line_to_main_stage(line_res, main_stage):
                             sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
         
 
-def insert_mongo(mongo_db_obj, document, t_name, l_name, num, date, s_name):
+def insert_mongo(mongo_db_obj, bulk_doc, l_name, num, date):
     """插入mongodb, 在主进程中根据函数返回值来决定是否退出对日志文件的循环, 进而退出主进程
-    document: mongodb文档
-    t_name: 集合名称(main)
-    l_name: 日志名称
+    bulk_doc: 由每分钟文档组成的批量插入的数组
+    l_name: 日志文件
     num: 当前已入库的行数
     date: 今天日期,格式 170515
-    s_name: 主机名"""
+    """
     try:
-        mongo_db_obj[t_name].insert(document)  # 插入数据
-        # 同时插入每台server已处理的行数
-        if mongo_db_obj['last_num'].find({'server': server}).count() == 0:
-            mongo_db_obj['last_num'].insert({'last_num': num, 'date': date, 'server': s_name})
-        else:
-            mongo_db_obj['last_num'].update({'server': server}, {'$set': {'last_num': num, 'date': date}})
+        mongo_db_obj['main'].insert_many(bulk_doc)  # 插入数据
+        mongo_db_obj['last_num'].update({'server': server}, {'$set': {'last_num': num, 'date': date}}, upsert=True)
     except Exception as err:
         logger.error('{}: insert data error: {}'.format(l_name, err))
-        exit(10)
+        raise
     finally:
         mongo_client.close()
 
@@ -290,17 +285,17 @@ def del_old_data(l_name, h_m):
 def main(log_name):
     """log_name:日志文件名"""
     global site_name
-    site_name = log_name.split('.access')[0]
+    site_name = log_name.split('.access')[0].replace('.', '')  # 也即mongodb 中的库名(将域名中的.去掉)
     invalid = 0  # 无效的请求数
     # main_stage存储处理过程中用于保存一分钟内的各项原始数据
     main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
                              'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
                              'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
+    bulk_documents = []  # 作为每分钟文档的容器, 当累积100个文档时, 进行一次批量插入
     # 当前处理的一分钟(亦即mongodb文档_id键的一部分,初始为''),格式: 0101(1时1分).(对日志数据以分钟为粒度进行处理分析)
     this_h_m = ''
-    # mongodb 中的库名
-    mongo_db_name = log_name.split('.access')[0].replace('.', '')  # 将域名中的.去掉
-    my_connect(mongo_db_name)
+    my_connect(site_name)
+
     # 开始处理逻辑
     # 当前日志文件总行数
     cur_num = int(run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=PIPE, universal_newlines=True).stdout.split()[0])
@@ -340,9 +335,14 @@ def main(log_name):
                     'requests': [],
                     'source': main_stage.pop('source')}  # 此处必须用pop，以保证下一行中引用的main_stage只包含以uri_abs为key的结构
                 minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
-
+                bulk_documents.append(minute_main_doc)
                 # 执行插入操作(每分钟的最终结果)
-                insert_mongo(mongo_db, minute_main_doc, 'main', log_name, n, y_m_d, server)
+                if len(bulk_documents) == 100:  # bulk_documents中累积100个文档之后再执行一次批量插入
+                    try:
+                        insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d)
+                        bulk_documents = []
+                    except:
+                        return  # 这里用exit无法退出主程序
                 # 清空临时字典main_stage和invalid
                 processed_num = 0
                 main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
@@ -373,7 +373,11 @@ def main(log_name):
                 'requests': [],
                 'source': main_stage.pop('source')}
             minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
-            insert_mongo(mongo_db, minute_main_doc, 'main', log_name, n, y_m_d, server)
+            bulk_documents.append(minute_main_doc)
+            try:
+                insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d)
+            except:
+                return
 
     del_old_data(log_name, this_h_m)
 
