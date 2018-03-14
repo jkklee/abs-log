@@ -15,10 +15,11 @@ def base_summary(ip_type, limit, mongo_col, match, total_dict):
                 {'$match': {'$and': [{'requests.ips.type': ip_type}]}},
                 {'$group': {'_id': '$requests.ips.ip', 'hits': {'$sum': '$requests.ips.hits'},
                             'bytes': {'$sum': '$requests.ips.bytes'}, 'time': {'$sum': '$requests.ips.time'}}}, {'$sort': {'hits': -1}}]  # 待优化，慢在$group阶段
-    pipeline_source_func = lambda source: [{'$project': {'source': 1}}, {'$group': {'_id': 'null',
-                                           'hits': {'$sum': '$source.{}.hits'.format(source)},
-                                           'bytes': {'$sum': '$source.{}.bytes'.format(source)},
-                                           'time': {'$sum': '$source.{}.time'.format(source)}}}]
+    pipeline_source_func = lambda source: [match['basic_match'], {'$project': {'source': 1}},
+                                           {'$group': {'_id': 'null',
+                                                       'hits': {'$sum': '$source.{}.hits'.format(source)},
+                                                       'bytes': {'$sum': '$source.{}.bytes'.format(source)},
+                                                       'time': {'$sum': '$source.{}.time'.format(source)}}}]
     # 限制条数时，$sort + $limit 可以减少mongodb内部的操作量，若不限制显示条数，此步的mongodb内部排序将无必要
     if limit:
         pipeline.append({'$limit': limit})
