@@ -10,18 +10,18 @@ This tool aim at trouble shooting and performance optimization based on web logs
 
 **先明确几个术语**：  
 `uri`指请求中不包含参数的部分；`request_uri`指原始的请求，包含参数或者无参数；`args`指请求中的参数部分。（参照[nginx](http://nginx.org/en/docs/http/ngx_http_core_module.html#variables)中的定义）  
-`uri_abs`和`args_abs`是指对uri和args进行抽象处理后的字符串（以便分类）。  
-例如`"/sub/0/100414/4070?channel=ios&version=1.4.5"`经抽象处理转换为`uri_abs:` "/sub/\*/\*/\*"，`args_abs:` "channel=\*&version=\*"
+`uri_abs`和`args_abs`是指对uri和args进行抽象处理后的字符串（以便分类），例如：  
+`"/sub/0/100414/4070?channel=ios&version=1.4.5"`经抽象处理转换为`uri_abs:` "/sub/\*/\*/\*"，`args_abs:` "channel=\*&version=\*"
 
 ## 特点
 1. 提供一个日志分析的总入口：经由此入口，可查看某站点所有 server 产生日志的汇总分析；亦可根据`时间段`和`server`两个维度进行过滤
 2. 支持对 request_uri，IP 和 response_code 进行分析，基于`请求数`、`响应大小`、`响应时间`三个大维度进行分析；另外不同子项又各有特点
-3. （核心思想）以**某一类** uri 或其对应的**各类** args 为维度进行分析（参照4）
-4. 对 request_uri 进行抽象处理并归类，分为 uri_abs 和 args_abs 两部分，以实现对 uri 和 args 按类（模式）进行分析
-5. 3和4中提到的**抽象归类**思想，默认抽象方法可满足大部分需求；另外也提供了定制抽象规则的选项，基于此可灵活指定请求中的任何部分是否要抽象处理
-6. request_uri 分析能直观展示哪类请求数量多、哪类请求耗时多、哪类请求占流量；另外可展示某一类请求在不同粒度里(minute, ten_min, hour, day)各指标随时间的分布变化；也可以针对某一 uri_abs 分析其不同 args_abs 各指标的分布
-7. IP 分析将所有请求分为3种来源(from_cdn/proxy, from_reverse_proxy, from_client_directly)，三种来源各自展示其访问量前 N 的 IP 地址；并且可展示某一 IP 访问的各指标随时间的分布；也可针对某一 IP 分析其产生的不同 uri_abs 各指标的分布 
-8. 通过4分位数概念以实现对`响应时间`和`响应大小`更准确的描述，因为对于日志中的响应时间，算数平均值的参考意义不大
+3. （核心思想）以**某一类** uri 或其对应的**各类** args 为维度进行分析，即对 request_uri 进行抽象处理将其分为 uri_abs 和 args_abs 两部分
+4. 3中提到的**抽象归类**思想，默认抽象方法可满足大部分需求；另外也提供了定制抽象规则的选项，基于此可灵活指定请求中的任何部分是否要抽象处理
+5. request_uri 分析能直观展示哪类请求数量多、哪类请求耗时多、哪类请求占流量；另外可展示某一类请求在不同粒度里(minute, ten_min, hour, day)各指标随时间的分布变化；也可以针对某一 uri_abs 分析其不同 args_abs 各指标的分布
+6. IP 分析将所有请求分为3种来源(from_cdn/proxy, from_reverse_proxy, from_client_directly)，三种来源各自展示其访问量前 N 的 IP 地址；并且可展示某一 IP 访问的各指标随时间的分布；也可针对某一 IP 分析其产生的不同 uri_abs 各指标的分布 
+7. 通过4分位数概念以实现对`响应时间`和`响应大小`更准确的描述，因为对于日志中的响应时间，算数平均值的参考意义不大
+8. 高性能：本着谁产生的日志谁处理的思想，日志分析脚本log_analyse要在web服务器上定时运行，因而log_analyse的高效率低资源也是重中之重。经测试，在笔者的服务器上（磁盘：3\*7200rpm组RAID5，网卡带宽：1GB），对于不同的日志文件，处理速度约在20000行/s~30000行/s之间
  
 ## 实现思路：
 分析脚本（`log_analyse.py`）部署到各台 web server，并通过 crontab 设置定时运行。`log_analyse.py`利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`server name` 等信息并进行初步加工然后存储进MongoDB。查看脚本（`log_show.py`）作为入口即可对所有web server的日志进行分析查看，至于实时性，取决于web server上`log_analyse.py`脚本的执行频率。
@@ -48,9 +48,9 @@ log_format  access  '$remote_addr - [$time_local] "$request" '
 ```
 [ljk@demo ~]$ log_show --help
 Usage:
-  log_show <site_name> [options] [ip|error_code]
-  log_show <site_name> [options] distribution (request [<request_uri>]|ip <ip>)
-  log_show <site_name> [options] detail (<request_uri>|<ip>)
+  log_show <site_name> [options] request [distribution [<request>]|detail <uri>]
+  log_show <site_name> [options] ip [distribution <ip>|detail <ip>]
+  log_show <site_name> [options] error [distribution <error_code>|detail <error_code>]
 
 Options:
   -h --help                   Show this screen.
@@ -61,17 +61,21 @@ Options:
   -g --group_by <group_by>    Group by every minute, every ten minutes, every hour or every day,
                               valid values: "minute", "ten_min", "hour", "day". [default: hour]
 
-  distribution                Show distribution(about hits,bytes,time) of request_uri in every period,
-                              or distribution of the specific ip in every period. Period is specific by --group_by
-  detail                      Display details of args analyse of the request_uri(if it has args),
-                              or details of the specific ip
+  distribution                Show distribution(about hits,bytes,time,etc) of:
+                              all or specific 'request', the specific 'ip', the specific 'error_code' in every period.
+                              Period is specific by --group_by
+  detail                      Show details of:
+                              detail 'args' analyse of the specific 'uri'(if it has args);
+                              detail 'uri' analyse of the specific 'ip' or 'error_code'
 
-  Notice: <request_uri> should inside quotation marks
+  Notice: it's best to put 'request_uri', 'uri' and 'ip' in quotation marks.
 ```
+所有示例均可通过`-f`，`-t`，`-s`参数对`起始时间`和`指定server`进行过滤  
 
-### 默认对指定站点今日已入库的数据进行分析，默认按点击量倒序排序取前5名
+### request子命令：
+对指定站点今日已入库的数据进行分析
 ```
-[ljk@demo ~]$ log_show api -l 3
+[ljk@demo ~]$ log_show api request -l 3
 ====================
 Total_hits:999205 invalid_hits:581
 ====================
@@ -95,31 +99,26 @@ Total_time:117048s
      17959   15.34%  %25<0.15 %50<0.19 %75<0.55 %100<2.93   %25<2791 %50<3078 %75<3213 %100<11327         /api/getRInfo/com/*/*
 ```
 通过上例可观察指定时间内（默认当天0时至当前时间）hits/bytes/time三个维度的排名以及响应时间和响应大小的分布情况。例如，看到某个uri_abs只有比较少的hits确产生了比较大的bytes或耗费了较多的time，那么该uri_abs是否值得关注一下呢。  
-**说明：**  
-可通过`-f`，`-t`，`-s`参数对`起始时间`和`指定web server`进行过滤；并通过`-l`参数控制展示条数
 
 ### ip子命令：
 显示基于ip地址的分析结果
 ```
-[ljk@demo ~]$ log_show.py api ip -l 3
+[ljk@demo ~]$ log_show.py api ip -l 2
 ====================
 From_cdn/Proxy:              hits  hits(%)       bytes  bytes(%)  time(%)
 ====================       199870    99.94   570.51 MB    99.99    99.99
           Last_cdn_ip
        xxx.57.xxx.189        1914     0.96   696.18 KB     0.12     0.68
       xxx.206.xxx.154        1741     0.87     1.56 MB     0.27     0.98
-      xxx.206.xxx.158        1567     0.78     1.63 MB     0.29     0.53
       User_ip_via_cdn
        xxx.249.xxx.56         787     0.39   154.82 KB     0.03     0.23
         xxx.60.xxx.86         183     0.09     1.05 MB     0.18     0.13
-        xxx.221.xxx.7         172     0.09     2.02 KB     0.00     0.05
 ====================
 From_reverse_proxy:          hits  hits(%)       bytes  bytes(%)  time(%)
 ====================           66     0.03    68.83 KB     0.01     0.01
     User_ip_via_proxy
        xxx.188.xxx.21           2     0.00     1.53 KB     0.00     0.00
           xxx.5.xxx.4           2     0.00    324.00 B     0.00     0.00
-       xxx.184.xxx.24           2     0.00    324.00 B     0.00     0.00
 ====================
 From_client_directly:        hits  hits(%)       bytes  bytes(%)  time(%)
 ====================           64     0.03     8.32 KB     0.00     0.00
@@ -127,12 +126,15 @@ From_client_directly:        hits  hits(%)       bytes  bytes(%)  time(%)
         192.168.1.202          29     0.01     58.00 B     0.00     0.00
         192.168.1.200          29     0.01     58.00 B     0.00     0.00
 ```
+IP分析的思想是将请求按来源归为三大类：From_cdn/Proxy，From_reverse_proxy，From_client_directly，然后各自分类内按请求次数对IP地址进行排序 
 
 ### distribution 子命令：
-对“所有请求”或“指定uri”或“指定request_uri”在指定时间段内按“分/十分/时/天”为粒度进行聚合统计
+对“所有request”或“指定uri/request_uri”按“分/十分/时/天”为粒度进行聚合统计  
+对“指定IP”按“分/十分/时/天”为粒度进行聚合统计  
+适用场景：查看request/IP随时间在各聚合粒度内各项指标的变化情况，例如针对某个uri发现其请求数（或带宽）变大，则可通过`distribution`子命令观察是某一段时间突然变大呢，还是比较平稳的呢  
 ```
-# 示例指定按minute进行分组聚合，默认显示5行
-[ljk@demo ~]$ python log_show.py api distribution request "/view/*/*.json" -g minute                
+# 示例1: 分析指定request的分布情况, 指定按minute进行分组聚合, 默认显示5行
+[ljk@demo ~]$ python log_show.py api request distribution "/view/*/*.json" -g minute                
 ====================
 uri_abs: /view/*/*.json
 Total_hits: 17130    Total_bytes: 23.92 MB
@@ -146,15 +148,35 @@ Total_hits: 17130    Total_bytes: 23.92 MB
 ```
 通过上例，可展示"/view/\*/\*.json"在指定时间段内的分布情况，包括hits/bytes/time总量以及每个粒度内个指标相对于总量的占比；该子命令亦能展示各指标随时间的“趋势”。  
 **说明：**  
-minute字段为指定的聚合（group）粒度，1803091654 表示`18年03月09日16时54分`  
-可通过`-f`，`-t`，`-s`参数对`起始时间`和`指定server`进行过滤；通过`-g`参数指定聚合的粒度（minute/ten_min/hour/day）  
-`request`子命令后可以跟具体的uri/request_uri(显示该uri/request_uri以指定粒度随时间的分布)或不跟uri(显示所有请求以指定粒度随时间的分布)
+minute字段为指定的聚合（group）粒度，1803091654 表示“18年03月09日16时54分”   
+可通过`-g`参数指定聚合的粒度（minute/ten_min/hour/day）  
+`distribution`子命令后可以跟具体的uri/request_uri（显示该uri/request_uri以指定粒度随时间的分布）或不跟uri（显示所有请求以指定粒度随时间的分布）  
+```
+# 示例2: 分析指定IP产生的请求数/带宽随时间分布情况, 默认聚合粒度为hour
+[ljk@demo ~]$ python log_show.py api ip -t 180314 distribution "140.206.109.174" -l 0
+====================
+IP: 140.206.109.174
+Total_hits: 10999    Total_bytes: 4.83 MB
+====================
+      hour        hits  hits(%)       bytes  bytes(%)
+  18031306        1273   11.57%   765.40 KB    15.47%
+  18031307        2133   19.39%  1004.74 KB    20.31%
+  18031308        2211   20.10%     1.00 MB    20.74%
+  18031309        2334   21.22%     1.05 MB    21.72%
+  18031310        2421   22.01%   850.79 KB    17.20%
+  18031311         627    5.70%   226.30 KB     4.57%
+```
+**说明：**  
+hour字段表示默认的聚合粒度，18031306表示“18年03月13日06时”  
+-l 0 表示不限制输出行数（即输出所有结果）
 
 ### detail 子命令：
-对某一uri进行详细分析，查看其不同参数(args)的各项指标分布。  
-适用场景：比如定位到某一类型的uri_abs在某方面(hits/bytes/time)有异常，就可以通过detail子命令对该类uri_abs进行更近一步的分析，精确定位到是哪种参数（args_abs）导致的异常。
+对某一uri进行详细分析，查看其不同参数（args）的各项指标分布  
+对某一IP进行详细分析，查看其产生的请求在不同uri_abs间的分布情  
+适用场景：比如定位到某一类型的uri_abs在某方面（hits/bytes/time）有异常，就可以通过detail子命令对该类uri_abs进行更近一步的分析，精确定位到是哪种参数（args_abs）导致的异常。
 ```
-[ljk@demo ~]$ python log_show.py api -f 180201 detail "/recommend/update" -l 3
+# 示例1:
+[ljk@demo ~]$ python log_show.py api -f 180201 request detail "/recommend/update" -l 3
 ====================
 uri_abs: /recommend/batchUpdate
 Total_hits: 10069    Total_bytes: 7.62 MB
@@ -164,10 +186,23 @@ Total_hits: 10069    Total_bytes: 7.62 MB
     4333   43.03%    3.25 MB    42.64%   42.30%  %25<0.03 %50<0.05 %75<0.07 %100<0.48   %25<752 %50<791 %75<840 %100<1447         category_id=*&channel=*&uid=*&version=*
      389    3.86%  314.15 KB     4.03%    0.88%  %25<0.02 %50<0.03 %75<0.04 %100<0.06   %25<766 %50<802 %75<850 %100<1203         category_id=*&channel=*&version=*
 ```
-通过上例可观察到"/recommend/update"这个uri所对应的不同参数各个指标的情况。另外还有一个附带的发现：开发在书写参数的时候没有完全统一规范，相同的参数组合没有按同一个顺序书写，虽不影响功能，但在精准的进行应用性能监控的时候会造成一定困扰。  
+通过上例可观察到"/recommend/update"这个uri所对应的不同参数各个指标的情况。另外还有一个附带的发现：开发在书写参数时相同的参数组合没有按同一个顺序书写，虽不影响功能，但在精准的进行应用性能监控的时候会造成一定困扰。  
 **说明：**  
 `detail`子命令后跟随uri（不含参数，含参数的话将忽略参数）  
-可通过`-f`，`-t`，`-s`参数对`起始时间`和`指定server`进行过滤
+```
+# 示例2: 观察某个IP分别产生了多少种请求, 每种请求的(hits/bytes/time)指标
+[ljk@demo ~]$ python log_show.py m -t 180314 ip detail "1.2.3.4"
+====================
+IP: 140.206.109.174
+Total_hits: 10999    Total_bytes: 4.83 MB
+====================
+    hits  hits(%)      bytes  bytes(%)  time(%)  uri_abs
+   10536   95.79%  405.47 KB     8.19%   92.01%  /introduction/watch
+     147    1.34%    1.90 MB    39.31%    1.93%  /view/*/*.html
+     138    1.25%  407.42 KB     8.23%    2.41%  /chapinfo/*/*.html
+      42    0.38%  644.88 KB    13.03%    1.38%  /info/*.html
+      30    0.27%  229.98 KB     4.65%    1.14%  /classify/*.json
+```
 
 ## log_analyse.py部署说明：
 该脚本的设计目标是将其放到web server的的计划任务里，定时（例如每30分钟或10分钟，自定义）执行，在需要时通过log_show.py进行分析即可。
