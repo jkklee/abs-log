@@ -138,6 +138,8 @@ def match_condition(server, start, end, uri_abs=None, args_abs=None, ip=None):
         basic_match = {'$match': {'$and': [{'_id': {'$gte': start}}, {'_id': {'$lt': end}}]}}
     elif start and not end:
         basic_match = {'$match': {'$and': [{'_id': {'$gte': start}}]}}
+    elif end and not start:
+        basic_match = {'$match': {'$and': [{'_id': {'$lt': end}}]}}
     else:     # 默认取今天的数据做汇总; 只有end时, 忽略end
         basic_match = {'$match': {'$and': [{'_id': {'$gte': today}}]}}
     if server:
