@@ -2,9 +2,9 @@
 # -*- coding:utf-8 -*-
 """
 Usage:
-  log_show <site_name> [options] [ip|error]
-  log_show <site_name> [options] distribution (request [<request>]|ip <ip>|error <error_code>)
-  log_show <site_name> [options] detail (request <uri>|ip <ip>|error <error_code> )
+  log_show <site_name> [options] request [distribution [<request>]|detail <uri>]
+  log_show <site_name> [options] ip [distribution <ip>|detail <ip>]
+  log_show <site_name> [options] error [distribution <error_code>|detail <error_code>]
 
 Options:
   -h --help                   Show this screen.
@@ -15,19 +15,19 @@ Options:
   -g --group_by <group_by>    Group by every minute, every ten minutes, every hour or every day,
                               valid values: "minute", "ten_min", "hour", "day". [default: hour]
 
-  distribution                Show distribution(about hits,bytes,time) of all request;
-                              or distribution of specific 'uri' or 'request_uri' in every period;
-                              or distribution of the specific 'ip' in every period.
+  distribution                Show distribution(about hits,bytes,time,etc) of:
+                              all or specific 'request', the specific 'ip', the specific 'error_code' in every period.
                               Period is specific by --group_by
-  detail                      Show details of 'args' analyse of the specific 'uri'(if it has args);
-                              or details of 'uri' analyse of the specific 'ip'
+  detail                      Show details of:
+                              detail 'args' analyse of the specific 'uri'(if it has args);
+                              detail 'uri' analyse of the specific 'ip' or 'error_code'
 
   Notice: it's best to put 'request_uri', 'uri' and 'ip' in quotation marks.
 """
 
 from docopt import docopt
 from common.common import mongo_client, match_condition, total_info
-from common.show import base_show, ip_show
+from common.show import request_show, ip_show, error_code_show
 
 arguments = docopt(__doc__)
 # print(arguments)  #debug
@@ -44,14 +44,14 @@ base_match = match_condition(arguments['--server'], arguments['--from'], argumen
 
 # 根据参数执行动作
 if arguments['distribution'] and arguments['request']:
-    base_show.distribution(arguments['<request>'], arguments['--group_by'], int(arguments['--limit']), mongo_col, arguments)
+    request_show.distribution(mongo_col, arguments)
 elif arguments['distribution'] and arguments['ip']:
     ip_show.distribution(mongo_col, arguments)
 elif arguments['distribution'] and arguments['error']:
     print('To be implement...')
 
 elif arguments['detail'] and arguments['request']:
-    base_show.detail(arguments['<uri>'], int(arguments['--limit']), mongo_col, arguments)
+    request_show.detail(mongo_col, arguments)
 elif arguments['detail'] and arguments['ip']:
     ip_show.detail(mongo_col, arguments)
 elif arguments['detail'] and arguments['error']:
@@ -68,6 +68,6 @@ elif arguments['error']:
 
 else:
     total_dict = total_info(mongo_col, base_match)
-    base_show.base_summary('hits', int(arguments['--limit']), mongo_col, base_match, total_dict)
-    base_show.base_summary('bytes', int(arguments['--limit']), mongo_col, base_match, total_dict)
-    base_show.base_summary('time', int(arguments['--limit']), mongo_col, base_match, total_dict)
+    request_show.base_summary('hits', int(arguments['--limit']), mongo_col, base_match, total_dict)
+    request_show.base_summary('bytes', int(arguments['--limit']), mongo_col, base_match, total_dict)
+    request_show.base_summary('time', int(arguments['--limit']), mongo_col, base_match, total_dict)

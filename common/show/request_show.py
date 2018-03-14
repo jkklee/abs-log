@@ -100,12 +100,14 @@ def distribution_pipeline(groupby, match, uri_abs=None, args_abs=None):
     return pipeline
 
 
-def distribution(text, groupby, limit, mongo_col, arguments):
+def distribution(mongo_col, arguments):
     """展示request按照指定period做group聚合的结果
-    text: request(with/without args)
-    groupby: 聚合周期(minute, ten_min, hour, day)
     mongo_col: 本次操作对应的集合名称
-    limit: 限制显示多少行(int)"""
+    arguments: docopt解析用户从log_show界面输入的参数而来的dict
+    """
+    text = arguments['<request>']  # request(with/without args)
+    groupby = arguments['--group_by']  # 聚合周期(minute, ten_min, hour, day)
+    limit = int(arguments['--limit'])  # 限制显示多少行
     if text:
         uri_abs, args_abs = text_abstract(text, arguments['<site_name>'])
     else:
@@ -163,12 +165,12 @@ def detail_pipeline(match):
     return pipeline
 
 
-def detail(text, limit, mongo_col, arguments):
+def detail(mongo_col, arguments):
     """展示uri的各args(若有的话)的 hits/bytes/time情况
-    text: 给定的uri
-    limit: 限制显示多少行(int)
     mongo_col: 本次操作对应的集合名称
     arguments: docopt解析用户从log_show界面输入的参数而来的dict"""
+    text = arguments['<uri>']  # 给定的uri
+    limit = int(arguments['--limit'])  # 限制显示多少行
     if text:
         uri_abs = text_abstract(text, arguments['<site_name>'])[0]
     else:

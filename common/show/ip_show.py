@@ -64,7 +64,7 @@ def distribution(mongo_col, arguments):
     mongo_col: 本次操作对应的集合名称
     arguments: docopt解析用户从log_show界面输入的参数而来的dict
     """
-    groupby = arguments['--group_by'] if arguments['--group_by'] else 'hour'
+    groupby = arguments['--group_by']
     group_id = group_by_func(groupby)
     ip = arguments['<ip>']
     limit = int(arguments['--limit'])
