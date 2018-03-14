@@ -36,7 +36,7 @@ if arguments['--group_by'] not in ('minute', 'ten_min', 'hour', 'day'):
     print("  Warning: --group_by must be one of {'minute', 'ten_min', 'hour', 'day'}")
     exit(10)
 
-mongo_db = mongo_client[arguments['<site_name>']]
+mongo_db = mongo_client[arguments['<site_name>'].replace('.', '')]
 # mongodb集合
 mongo_col = mongo_db['main']
 # 最基本的过滤条件
