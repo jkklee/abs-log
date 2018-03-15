@@ -145,7 +145,7 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
                 if ip_v['hits'] < IP_STORE_MIN_HITS:
                     break
                 single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3),
-                                  'bytes': ip_v['bytes'], 'type': 'user_ip_via_cdn'}
+                                  'bytes': ip_v['bytes'], 'type': ip_type}
                 single_uri_dict['ips'].append(single_ip_dict)
         add_ip_statistics('user_ip_via_cdn')
         add_ip_statistics('last_cdn_ip')
