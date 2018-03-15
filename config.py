@@ -23,10 +23,10 @@ mongo_port = 27017
 # 为了使mongodb数据集尽量小, 每分钟统计结果中, 取点击数前URI_STORE_MAX_NUM的uri进行入库,
 # 同时若uri在该分钟内点击数小于URI_STORE_MIN_HITS, 则该uri不予入库
 URI_STORE_MAX_NUM = 80
-URI_STORE_MIN_HITS = 10
+URI_STORE_MIN_HITS = 5
 # ip统计, 每分钟统计结果中, 取点击数前IP_STORE_MAX_NUM的ip, 同时若ip在该分钟内点击数小于IP_STORE_MIN_HITS, 则该ip不予入库
 IP_STORE_MAX_NUM = 30
-IP_STORE_MIN_HITS = 5
+IP_STORE_MIN_HITS = 3
 # 保存几天的数据
 LIMIT = 10
 
