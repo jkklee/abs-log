@@ -84,12 +84,11 @@ def process_line(line_str):
 
 
 def final_uri_dicts(main_stage, log_name, this_h_m):
-    """对main_stage里的原始数据进行整合生成每个uri_abs对应的字典,插入到minute_main_doc['request']中, 生成最终存储到mongodb的文档(字典)
+    """对main_stage里的原始数据进行整合生成每个uri_abs对应的字典,插入到minute_main_doc['request']中, 生成最终存储到mongodb的文档
     一个uri_abs在minute_main_doc中对应的格式如下"""
     uris = []
     if len(main_stage) > URI_STORE_MAX_NUM:
-        logger.warning("{}: truncate uri_abs reverse sorted by 'hits' from {} to {} at {} due to the "
-                       "URI_STORE_MAX_NUM setting".format(log_name, len(main_stage), URI_STORE_MAX_NUM, this_h_m))
+        logger.warning("{}: truncate uri_abs reverse sorted by 'hits' from {} to {} at {}".format(log_name, len(main_stage), URI_STORE_MAX_NUM, this_h_m))
     for uri_k, uri_v in sorted(main_stage.items(), key=lambda item: item[1]['hits'], reverse=True)[:URI_STORE_MAX_NUM]:
         '''取点击量前URI_STORE_MAX_NUM的uri_abs'''
         if uri_v['hits'] < URI_STORE_MIN_HITS:
@@ -134,41 +133,24 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
                                'error_code': main_stage[uri_k]['args'][arg_k]['error_code']}
             single_uri_dict['args'].append(single_arg_dict)
 
-        if len(uri_v['user_ip_via_cdn']) > MAX_IP_NUM:
-            logger.warning("{}:{} truncate user_ip_via_cdn reverse sorted by 'hits' from {} to {} at {}".format(
-                log_name, uri_k, len(main_stage[uri_k]['user_ip_via_cdn']), MAX_IP_NUM, this_h_m))
-        for ip_k, ip_v in sorted(uri_v['user_ip_via_cdn'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_IP_NUM]:
-            '''取点击量前MAX_IP_NUM的user_ip_via_cdn'''
-            single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3), 'bytes': ip_v['bytes'], 'type': 'user_ip_via_cdn'}
-            single_uri_dict['ips'].append(single_ip_dict)
-        del uri_v['user_ip_via_cdn']
-
-        if len(uri_v['last_cdn_ip']) > MAX_IP_NUM:
-            logger.warning("{}:{} truncate last_cdn_ip reverse sorted by 'hits' from {} to {} at {}".format(
-                log_name, uri_k, len(main_stage[uri_k]['last_cdn_ip']), MAX_IP_NUM, this_h_m))
-        for ip_k, ip_v in sorted(uri_v['last_cdn_ip'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_IP_NUM]:
-            '''取点击量前MAX_IP_NUM的last_cdn_ip'''
-            single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3), 'bytes': ip_v['bytes'], 'type': 'last_cdn_ip'}
-            single_uri_dict['ips'].append(single_ip_dict)
-        del uri_v['last_cdn_ip']
-
-        if len(uri_v['user_ip_via_proxy']) > MAX_IP_NUM:
-            logger.warning("{}:{} truncate user_ip_via_proxy reverse sorted by 'hits' from {} to {} at {}".format(
-                log_name, uri_k, len(main_stage[uri_k]['user_ip_via_proxy']), MAX_IP_NUM, this_h_m))
-        for ip_k, ip_v in sorted(uri_v['user_ip_via_proxy'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_IP_NUM]:
-            '''取点击量前MAX_IP_NUM的user_ip_via_proxy'''
-            single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3), 'bytes': ip_v['bytes'], 'type': 'user_ip_via_proxy'}
-            single_uri_dict['ips'].append(single_ip_dict)
-        del uri_v['user_ip_via_proxy']
-
-        if len(uri_v['remote_addr']) > MAX_IP_NUM:
-            logger.warning("{}:{} truncate remote_addr reverse sorted by 'hits' from {} to {} at {}".format(
-                log_name, uri_k, len(main_stage[uri_k]['remote_addr']), MAX_IP_NUM, this_h_m))
-        for ip_k, ip_v in sorted(uri_v['remote_addr'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_IP_NUM]:
-            '''取点击量前MAX_IP_NUM的remote_addr'''
-            single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3), 'bytes': ip_v['bytes'], 'type': 'remote_addr'}
-            single_uri_dict['ips'].append(single_ip_dict)
-        del uri_v['remote_addr']
+        def add_ip_statistics(ip_type):
+            """将种类型ip的统计信息加入到single_uri_dict字典
+            ip_type: user_ip_via_cdn, last_cdn_ip, user_ip_via_proxy, remote_addr"""
+            nonlocal single_uri_dict
+            if len(uri_v[ip_type]) > IP_STORE_MAX_NUM:
+                logger.warning("{}:{} truncate user_ip_via_cdn reverse sorted by 'hits' from {} to {} at {}".format(
+                    log_name, uri_k, len(main_stage[uri_k][ip_type]), IP_STORE_MAX_NUM, this_h_m))
+            for ip_k, ip_v in sorted(uri_v[ip_type].items(), key=lambda item: item[1]['hits'], reverse=True)[:IP_STORE_MAX_NUM]:
+                '''取ip类型为ip_type的统计中点击量前IP_STORE_MAX_NUM的user_ip_via_cdn'''
+                if ip_v['hits'] < IP_STORE_MIN_HITS:
+                    break
+                single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3),
+                                  'bytes': ip_v['bytes'], 'type': 'user_ip_via_cdn'}
+                single_uri_dict['ips'].append(single_ip_dict)
+        add_ip_statistics('user_ip_via_cdn')
+        add_ip_statistics('last_cdn_ip')
+        add_ip_statistics('user_ip_via_proxy')
+        add_ip_statistics('remote_addr')
 
         uris.append(single_uri_dict)
     return uris
