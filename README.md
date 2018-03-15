@@ -21,7 +21,7 @@ This tool aim at trouble shooting and performance optimization based on web logs
 5. request_uri 分析能直观展示哪类请求数量多、哪类请求耗时多、哪类请求占流量；另外可展示某一类请求在不同粒度里(minute, ten_min, hour, day)各指标随时间的分布变化；也可以针对某一 uri_abs 分析其不同 args_abs 各指标的分布
 6. IP 分析将所有请求分为3种来源(from_cdn/proxy, from_reverse_proxy, from_client_directly)，三种来源各自展示其访问量前 N 的 IP 地址；并且可展示某一 IP 访问的各指标随时间的分布；也可针对某一 IP 分析其产生的不同 uri_abs 各指标的分布 
 7. 通过4分位数概念以实现对`响应时间`和`响应大小`更准确的描述，因为对于日志中的响应时间，算数平均值的参考意义不大
-8. 高性能：本着谁产生的日志谁处理的思想，日志分析脚本log_analyse要在web服务器上定时运行，因而log_analyse的高效率低资源也是重中之重。经测试，在笔者的服务器上（磁盘：3\*7200rpm组RAID5，网卡带宽：1GB），对于不同的日志文件，处理速度约在20000行/s~30000行/s之间
+8. 高性能：本着谁产生的日志谁处理的思想，日志分析脚本log_analyse要在web服务器上定时运行，因而log_analyse的高效率低资源也是重中之重。经测试，在笔者的服务器上（磁盘：3\*7200rpm组RAID5，千兆局域网），对于不同的日志文件，处理速度在20000行/s~30000行/s之间
  
 ## 实现思路：
 分析脚本（`log_analyse.py`）部署到各台 web server，并通过 crontab 设置定时运行。`log_analyse.py`利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`server name` 等信息并进行初步加工然后存储进MongoDB。查看脚本（`log_show.py`）作为入口即可对所有web server的日志进行分析查看，至于实时性，取决于web server上`log_analyse.py`脚本的执行频率。
@@ -129,9 +129,10 @@ From_client_directly:        hits  hits(%)       bytes  bytes(%)  time(%)
 IP分析的思想是将请求按来源归为三大类：From_cdn/Proxy，From_reverse_proxy，From_client_directly，然后各自分类内按请求次数对IP地址进行排序 
 
 ### distribution 子命令：
-对“所有request”或“指定uri/request_uri”按“分/十分/时/天”为粒度进行聚合统计  
-对“指定IP”按“分/十分/时/天”为粒度进行聚合统计  
-适用场景：查看request/IP随时间在各聚合粒度内各项指标的变化情况，例如针对某个uri发现其请求数（或带宽）变大，则可通过`distribution`子命令观察是某一段时间突然变大呢，还是比较平稳的呢  
+1. 对 “所有request” 或 “指定uri/request_uri” 按 “分/十分/时/天” 为粒度进行聚合统计  
+2. 对 “指定IP” 按 “分/十分/时/天” 为粒度进行聚合统计  
+
+适用场景：查看request/IP随时间在各聚合粒度内各项指标的变化情况，例如针对某个uri发现其请求数（或带宽）变大，则可通过`distribution`子命令观察是某一段时间突然变大呢，还是比较平稳的变大  
 ```
 # 示例1: 分析指定request的分布情况, 指定按minute进行分组聚合, 默认显示5行
 [ljk@demo ~]$ python log_show.py api request distribution "/view/*/*.json" -g minute                
@@ -171,9 +172,10 @@ hour字段表示默认的聚合粒度，18031306表示“18年03月13日06时”
 -l 0 表示不限制输出行数（即输出所有结果）
 
 ### detail 子命令：
-对某一uri进行详细分析，查看其不同参数（args）的各项指标分布  
-对某一IP进行详细分析，查看其产生的请求在不同uri_abs间的分布情  
-适用场景：比如定位到某一类型的uri_abs在某方面（hits/bytes/time）有异常，就可以通过detail子命令对该类uri_abs进行更近一步的分析，精确定位到是哪种参数（args_abs）导致的异常。
+1. 对某一uri进行详细分析，查看其不同参数（args）的各项指标分布  
+2. 对某一IP进行详细分析，查看其产生的请求在不同uri_abs间的分布情  
+
+适用场景：比如定位到某一类型的uri_abs在某方面（hits/bytes/time）有异常，就可以通过detail子命令对该类uri_abs进行更近一步的分析，精确定位到是哪种参数（args_abs）导致的异常；或者观察到某个IP访问异常，可以再深入一下该IP是泛泛的访问呢，还是只对某些uri感兴趣。
 ```
 # 示例1:
 [ljk@demo ~]$ python log_show.py api -f 180201 request detail "/recommend/update" -l 3
