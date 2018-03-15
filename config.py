@@ -20,11 +20,13 @@ mongo_host = '172.16.2.24'
 mongo_port = 27017
 # 存储设置
 # mongodb存储结构为每个站点对应一个库一个集合(main), 每分钟每server产生一个统计结果文档(即分析粒度最小达到分钟级)
-# 为了使mongodb数据集尽量小, 每分钟统计结果中, 只取点击数前MAX_URI_NUM的uri, 每个uri中点击数前MAX_ARG_NUM的args进行入库
-MAX_URI_NUM = 80
-MAX_ARG_NUM = 20
-# ip统计, 每分钟统计结果中, 取点击数前MAX_IP_NUM的ip
-MAX_IP_NUM = 30
+# 为了使mongodb数据集尽量小, 每分钟统计结果中, 取点击数前URI_STORE_MAX_NUM的uri进行入库,
+# 同时若uri在该分钟内点击数小于URI_STORE_MIN_HITS, 则该uri不予入库
+URI_STORE_MAX_NUM = 80
+URI_STORE_MIN_HITS = 10
+# ip统计, 每分钟统计结果中, 取点击数前IP_STORE_MAX_NUM的ip, 同时若ip在该分钟内点击数小于IP_STORE_MIN_HITS, 则该ip不予入库
+IP_STORE_MAX_NUM = 30
+IP_STORE_MIN_HITS = 5
 # 保存几天的数据
 LIMIT = 10
 

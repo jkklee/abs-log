@@ -87,11 +87,13 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
     """对main_stage里的原始数据进行整合生成每个uri_abs对应的字典,插入到minute_main_doc['request']中, 生成最终存储到mongodb的文档(字典)
     一个uri_abs在minute_main_doc中对应的格式如下"""
     uris = []
-    if len(main_stage) > MAX_URI_NUM:
+    if len(main_stage) > URI_STORE_MAX_NUM:
         logger.warning("{}: truncate uri_abs reverse sorted by 'hits' from {} to {} at {} due to the "
-                       "MAX_URI_NUM setting".format(log_name, len(main_stage), MAX_URI_NUM, this_h_m))
-    for uri_k, uri_v in sorted(main_stage.items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_URI_NUM]:
-        '''取点击量前MAX_URI_NUM的uri_abs'''
+                       "URI_STORE_MAX_NUM setting".format(log_name, len(main_stage), URI_STORE_MAX_NUM, this_h_m))
+    for uri_k, uri_v in sorted(main_stage.items(), key=lambda item: item[1]['hits'], reverse=True)[:URI_STORE_MAX_NUM]:
+        '''取点击量前URI_STORE_MAX_NUM的uri_abs'''
+        if uri_v['hits'] < URI_STORE_MIN_HITS:
+            break
         uri_quartile_time = get_quartile(uri_v['time'])
         uri_quartile_bytes = get_quartile(uri_v['bytes'])
         single_uri_dict = {'uri_abs': uri_k,
@@ -110,10 +112,7 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
                            'bytes': sum(uri_v['bytes']),
                            'args': [],
                            'ips': []}
-        if len(uri_v['args']) > MAX_ARG_NUM:
-            logger.warning("{}:{} truncate arg_abs reverse sorted by 'hits' from {} to {} at {} due to the "
-                           "MAX_ARG_NUM setting".format(log_name, uri_k, len(main_stage[uri_k]['args']), MAX_ARG_NUM, this_h_m))
-        for arg_k, arg_v in sorted(uri_v['args'].items(), key=lambda item: item[1]['hits'], reverse=True)[:MAX_ARG_NUM]:
+        for arg_k, arg_v in uri_v['args'].items():
             '''取点击量前MAX_ARG_NUM的args_abs'''
             arg_quartile_time = get_quartile(arg_v['time'])
             arg_quartile_bytes = get_quartile(arg_v['bytes'])
@@ -279,7 +278,7 @@ def del_old_data(l_name, h_m):
             for col in del_col:
                 mongo_db.drop_collection(col)
         except Exception as err:
-            logger.error("{}: delete collections before {} days error: {}".format(l_name, LIMIT, err))
+            logger.error("{}: delete documents before {} days error: {}".format(l_name, LIMIT, err))
 
 
 def main(log_name):
