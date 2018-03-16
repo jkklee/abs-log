@@ -1,7 +1,7 @@
 # web_log_analyse
 This tool aim at trouble shooting and performance optimization based on web logs, it's not a generally said log analyse/statistics solution. It preprocess logs on all web server with a specified period and save the intermediate results into mongodb for finally use(with `log_show.py`)
 
-日志分析在web系统中故障排查、性能分析方面有着非常重要的作用。该工具的侧重点不是通常的PV，UV等展示，而是在指定时间段内提供细粒度（最小分钟级别，即一分钟内的日志做**抽象**和**汇总**）的异常定位和性能分析。
+日志分析在web系统中故障排查、性能分析方面有着非常重要的作用。该项目的侧重点不是通常的PV，UV等展示，而是在指定时间段内提供细粒度（最小分钟级别）的异常定位和性能分析。
 
 ## Dependencies
 - Python 3.4+
@@ -13,18 +13,20 @@ This tool aim at trouble shooting and performance optimization based on web logs
 `uri_abs`和`args_abs`是指对uri和args进行抽象处理后的字符串（以便分类），例如：  
 `"/sub/0/100414/4070?channel=ios&version=1.4.5"`经抽象处理转换为`uri_abs:` "/sub/\*/\*/\*"，`args_abs:` "channel=\*&version=\*"
 
-## 特点
-1. 提供一个日志分析的总入口：经由此入口，可查看某站点所有 server 产生日志的汇总分析；亦可根据`时间段`和`server`两个维度进行过滤
+## 功能
+1. 提供统一的日志分析入口：经由此入口，可查看站点所有的server产生的日志的汇总分析；亦可根据`时间段`和`server`两个维度进行过滤
 2. 支持对 request_uri，IP 和 response_code 进行分析，基于`请求数`、`响应大小`、`响应时间`三个大维度进行分析；另外不同子项又各有特点
-3. （核心思想）以**某一类** uri 或其对应的**各类** args 为维度进行分析，即对 request_uri 进行抽象处理将其分为 uri_abs 和 args_abs 两部分
-4. 3中提到的**抽象归类**思想，默认抽象方法可满足大部分需求；另外也提供了定制抽象规则的选项，基于此可灵活指定请求中的任何部分是否要抽象处理
-5. request_uri 分析能直观展示哪类请求数量多、哪类请求耗时多、哪类请求占流量；另外可展示某一类请求在不同粒度里(minute, ten_min, hour, day)各指标随时间的分布变化；也可以针对某一 uri_abs 分析其不同 args_abs 各指标的分布
-6. IP 分析将所有请求分为3种来源(from_cdn/proxy, from_reverse_proxy, from_client_directly)，三种来源各自展示其访问量前 N 的 IP 地址；并且可展示某一 IP 访问的各指标随时间的分布；也可针对某一 IP 分析其产生的不同 uri_abs 各指标的分布 
-7. 通过4分位数概念以实现对`响应时间`和`响应大小`更准确的描述，因为对于日志中的响应时间，算数平均值的参考意义不大
-8. 高性能：本着谁产生的日志谁处理的思想，日志分析脚本log_analyse要在web服务器上定时运行，因而log_analyse的高效率低资源也是重中之重。经测试，在笔者的服务器上（磁盘：3\*7200rpm组RAID5，千兆局域网），对于不同的日志文件，处理速度在20000行/s~30000行/s之间
+3. request_uri 分析能直观展示哪类请求数量多、哪类请求耗时多、哪类请求占流量；另外可展示某一类请求在不同粒度里(minute, ten_min, hour, day)各指标随时间的分布变化；也可以针对某一 uri_abs 分析其不同 args_abs 各指标的分布
+4. IP 分析将所有请求分为3种来源(from_cdn/proxy, from_reverse_proxy, from_client_directly)，三种来源各自展示其访问量前 N 的 IP 地址；并且可展示某一 IP 访问的各指标随时间的分布；也可针对某一 IP 分析其产生的不同 uri_abs 各指标的分布 
+
+## 特点
+1. **核心思想**: 对request_uri进行**抽象归类**，将其中变化的部分以 “\*” 表示，这样留下不变的部分就能代表具体的一类请求。实际上是换一种方式看待日志，从 “以具体的一行日志文本作为最小分析单位” 抽象上升到 “以某一功能点，某一接口或某一模块最为最小分析单位”
+2. 支持定制抽象规则，可灵活指定请求中的某些部分是否要抽象处理（默认的抽象方法可满足大部分需求）
+3. 通过4分位数概念以实现对`响应时间`和`响应大小`更准确的描述，因为对于日志中的响应时间，算数平均值的参考意义不大
+4. 高性能：本着谁产生的日志谁处理的思想，日志分析脚本log_analyse要在web服务器上定时运行，因而log_analyse的高效率低资源也是重中之重。经测试，在笔者的服务器上（磁盘：3\*7200rpm组RAID5，千兆局域网），对于不同的日志文件，处理速度在20000行/s~30000行/s之间
  
 ## 实现思路：
-分析脚本（`log_analyse.py`）部署到各台 web server，并通过 crontab 设置定时运行。`log_analyse.py`利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`server name` 等信息并进行初步加工然后存储进MongoDB。查看脚本（`log_show.py`）作为入口即可对所有web server的日志进行分析查看，至于实时性，取决于web server上`log_analyse.py`脚本的执行频率。
+分析脚本（`log_analyse.py`）部署到各台web server，并通过crontab设置定时运行。`log_analyse.py`利用python的re模块通过正则表达式对日志进行分析处理，取得`uri`、`args`、`时间当前`、`状态码`、`响应大小`、`响应时间`、`server name` 等信息并进行初步加工然后存储进MongoDB。查看脚本（`log_show.py`）作为入口即可对所有web server的日志进行分析查看，至于实时性，取决于web server上`log_analyse.py`脚本的执行频率。
 
 ### 前提规范：
  - 各台server的日志文件按统一路径存放
