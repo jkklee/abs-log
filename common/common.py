@@ -2,6 +2,7 @@
 from config import mongo_host, mongo_port, abs_special
 from urllib.parse import unquote
 import time
+from datetime import datetime, timedelta
 import re
 import pymongo
 from sys import exit
@@ -112,6 +113,15 @@ def special_update_dict(dict_obj, key, standby_value=None, sub_type=None, sub_ke
             dict_obj[key] = sub_type
             for k, v in zip(sub_keys, sub_values):
                 dict_obj[key][k] = v
+
+
+def get_delta_date(date, delta):
+    """对于给定的date(格式: 180315), 返回其往前推delta天的日期(相同格式)"""
+    year = int(date[0:2])+2000
+    month = int(date[2:4])
+    day = int(date[4:])
+    min_date = datetime(year, month, day) - timedelta(days=delta-1)
+    return min_date.strftime('%y%m%d')
 
 
 # -----log_show使用----- #

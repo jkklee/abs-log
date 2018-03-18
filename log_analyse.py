@@ -83,6 +83,16 @@ def process_line(line_str):
                 'user_ip': user_ip, 'last_cdn_ip': last_cdn_ip, 'request_method': request_method, 'request_uri': request_uri}
 
 
+def get_log_date(fp):
+    """从日志文件中读取第一行, 获取日志产生的日期时间"""
+    line_res = process_line(fp.readline().rstrip('\n'))
+    date = line_res['time_local'].split(':')[0]
+    d_m_y = date.split('/')
+    y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
+    fp.seek(0)
+    return date, y_m_d
+
+
 def final_uri_dicts(main_stage, log_name, this_h_m):
     """对main_stage里的原始数据进行整合生成每个uri_abs对应的字典,插入到minute_main_doc['request']中, 生成最终存储到mongodb的文档
     一个uri_abs在minute_main_doc中对应的格式如下"""
@@ -223,11 +233,11 @@ def insert_mongo(mongo_db_obj, bulk_doc, l_name, num, date):
     bulk_doc: 由每分钟文档组成的批量插入的数组
     l_name: 日志文件
     num: 当前已入库的行数
-    date: 今天日期,格式 170515
+    date: 日志中的日期,格式 170515
     """
     try:
         mongo_db_obj['main'].insert_many(bulk_doc)  # 插入数据
-        mongo_db_obj['last_num'].update({'server': server}, {'$set': {'last_num': num, 'date': date}}, upsert=True)
+        mongo_db_obj['last_num'].update({'$and': [{'server': server}, {'date': date}]}, {'$set': {'last_num': num}}, upsert=True)
     except Exception as err:
         logger.error('{}: insert data error: {}'.format(l_name, err))
         raise
@@ -235,32 +245,33 @@ def insert_mongo(mongo_db_obj, bulk_doc, l_name, num, date):
         mongo_client.close()
 
 
-def get_prev_num(l_name):
+def get_prev_num(l_name, date):
     """取得本server今天已入库的行数
-    l_name:日志文件名"""
+    l_name:日志文件名
+    date: 日志中的日期,格式 170515"""
     try:
-        tmp = mongo_db['last_num'].find({'date': today, 'server': server}, {'last_num': 1, '_id': 0})
+        tmp = mongo_db['last_num'].find({'date': date, 'server': server}, {'last_num': 1, '_id': 0})
         if tmp.count() == 1:
             return tmp.next()['last_num']
         elif tmp.count() == 0:
             return 0
-        else:
-            logger.error("{}: more than one 'last_num' record of {} at {}, skip".format(l_name, server, today))
     except Exception as err:
-        logger.error("{}: get 'last_num' of {} at {} error, skip: {}".format(l_name, server, today, err))
+        logger.error("{}: get 'last_num' of {} at {} error, skip: {}".format(l_name, server, date, err))
 
 
-def del_old_data(l_name, h_m):
+def del_old_data(l_name, date, h_m):
     """删除N天前的数据, 默认为LIMIT
-    h_m: hour and minute(处理到23:59的日志时执行清理操作)"""
-    if h_m == '2359':
-        col_name = mongo_db.collection_names()
-        del_col = sorted(col_name, reverse=True)[LIMIT:] if len(col_name) > LIMIT else []
-        try:
-            for col in del_col:
-                mongo_db.drop_collection(col)
-        except Exception as err:
-            logger.error("{}: delete documents before {} days error: {}".format(l_name, LIMIT, err))
+    l_name: 日志文件名
+    date: 日期, 格式180315
+    h_m: 当前hour and minute(到23:59时执行清理操作)"""
+    if h_m != '2359':
+        return
+    min_date = get_delta_date(date, LIMIT)
+    try:
+        mongo_db['main'].remove({'_id': {'$lt': min_date}})
+        mongo_db['last_num'].remove({'date': {'$lt': min_date}})
+    except Exception as err:
+        logger.error("{}: delete documents before {} days error: {}".format(l_name, LIMIT, err))
 
 
 def main(log_name):
@@ -278,73 +289,36 @@ def main(log_name):
     my_connect(site_name)
 
     # 开始处理逻辑
+    fp = open(log_name)
+    log_date_ori, log_date = get_log_date(fp)
     # 当前日志文件总行数
     cur_num = int(run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=PIPE, universal_newlines=True).stdout.split()[0])
     # 上一次处理到的行数
-    prev_num = get_prev_num(log_name)
-    if prev_num is None:
+    prev_num = get_prev_num(log_name, log_date)
+    if prev_num is None or cur_num <= prev_num:
         return
     # 根据当前行数和mongodb中记录的last_num对比, 决定本次要处理的行数范围
     n = processed_num = 0
-    with open(log_name) as fp:
-        for line_str in fp:
-            n += 1
-            processed_num += 1
-            if n <= prev_num:
-                processed_num -= 1
-                continue
-            elif n > cur_num:
-                break
-            # 开始处理
-            line_res = process_line(line_str)
-            if not line_res:
-                invalid += 1
-                continue
-            date_time = line_res['time_local'].split(':')
-            date = date_time[0]
-            hour = date_time[1]
-            minute = date_time[2]
+    for line_str in fp:
+        n += 1
+        processed_num += 1
+        if n <= prev_num:
+            processed_num -= 1
+            continue
+        elif n > cur_num:
+            break
+        # 开始处理
+        line_res = process_line(line_str)
+        if not line_res:
+            invalid += 1
+            continue
+        date_time = line_res['time_local'].split(':')
+        date = date_time[0]
+        hour = date_time[1]
+        minute = date_time[2]
 
-            # 分钟粒度交替时: 从临时字典中汇总上一分钟的结果并将其入库
-            if this_h_m != '' and this_h_m != hour + minute:
-                minute_main_doc = {
-                    '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
-                    'total_hits': processed_num,
-                    'invalid_hits': invalid,
-                    'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
-                    'total_time': round(main_stage['source']['from_cdn']['time'] + main_stage['source']['from_reverse_proxy']['time'] + main_stage['source']['from_client_directly']['time'], 3),
-                    'requests': [],
-                    'source': main_stage.pop('source')}  # 此处必须用pop，以保证下一行中引用的main_stage只包含以uri_abs为key的结构
-                minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
-                bulk_documents.append(minute_main_doc)
-                # 执行插入操作(每分钟的最终结果)
-                if len(bulk_documents) == 100:  # bulk_documents中累积100个文档之后再执行一次批量插入
-                    try:
-                        insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d)
-                        bulk_documents = []
-                    except:
-                        return  # 这里用exit无法退出主程序
-                # 清空临时字典main_stage和invalid
-                processed_num = 0
-                main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
-                                         'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
-                                         'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
-                invalid = 0
-                logger.info('{} processed to {}'.format(log_name, line_res['time_local']))
-
-            # 不到分钟粒度交替时:
-            # 以下3行用于生成mongodb中文档的_id
-            d_m_y = date.split('/')
-            y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
-            this_h_m = hour + minute
-            if y_m_d != today:
-                logger.error("{}: not today's log, exit".format(log_name))
-                break
-            # 调用append_line_to_main_stage函数处理每一行
-            append_line_to_main_stage(line_res, main_stage)
-
-        # 对最后一部分未能满足分钟交替条件的日志进行处理
-        if processed_num > 0:
+        # 分钟粒度交替时: 从临时字典中汇总上一分钟的结果并将其入库
+        if this_h_m != '' and this_h_m != hour + minute:
             minute_main_doc = {
                 '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
                 'total_hits': processed_num,
@@ -352,15 +326,53 @@ def main(log_name):
                 'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
                 'total_time': round(main_stage['source']['from_cdn']['time'] + main_stage['source']['from_reverse_proxy']['time'] + main_stage['source']['from_client_directly']['time'], 3),
                 'requests': [],
-                'source': main_stage.pop('source')}
+                'source': main_stage.pop('source')}  # 此处必须用pop，以保证下一行中引用的main_stage只包含以uri_abs为key的结构
             minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
             bulk_documents.append(minute_main_doc)
-            try:
-                insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d)
-            except:
-                return
+            # 执行插入操作(每分钟的最终结果)
+            if len(bulk_documents) == 100:  # bulk_documents中累积100个文档之后再执行一次批量插入
+                try:
+                    insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d)
+                    bulk_documents = []
+                    processed_num = 0
+                except:
+                    return  # 这里用exit无法退出主程序
+            # 清空临时字典main_stage和invalid
+            main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
+                                     'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
+                                     'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
+            invalid = 0
+            logger.info('{} processed to {}'.format(log_name, line_res['time_local']))
 
-    del_old_data(log_name, this_h_m)
+        # 不到分钟粒度交替时:
+        # y_m_d和this_h_m行用于生成mongodb中文档的_id
+        if date == log_date_ori:
+            y_m_d = log_date
+        else:
+            d_m_y = date.split('/')
+            y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
+        this_h_m = hour + minute
+        # 调用append_line_to_main_stage函数处理每一行
+        append_line_to_main_stage(line_res, main_stage)
+
+    # 对最后一部分未能满足分钟交替条件的日志进行处理
+    if processed_num > 0:
+        minute_main_doc = {
+            '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
+            'total_hits': processed_num,
+            'invalid_hits': invalid,
+            'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
+            'total_time': round(main_stage['source']['from_cdn']['time'] + main_stage['source']['from_reverse_proxy']['time'] + main_stage['source']['from_client_directly']['time'], 3),
+            'requests': [],
+            'source': main_stage.pop('source')}
+        minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
+        bulk_documents.append(minute_main_doc)
+        try:
+            insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d)
+        except:
+            return
+
+    del_old_data(log_name, y_m_d, this_h_m)
 
 
 if __name__ == "__main__":
