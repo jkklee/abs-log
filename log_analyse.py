@@ -334,10 +334,10 @@ def main(log_name):
                 try:
                     insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d)
                     bulk_documents = []
-                    processed_num = 0
                 except:
                     return  # 这里用exit无法退出主程序
             # 清空临时字典main_stage和invalid
+            processed_num = 0
             main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
                                      'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
                                      'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
