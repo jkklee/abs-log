@@ -251,8 +251,8 @@ def get_prev_num(l_name, date):
     """取得本server今天已入库的行数
     l_name:日志文件名
     date: 日志中的日期,格式 170515"""
-    tmp = mongo_db['last_num'].aggregate([{'$project': {'server': 1, 'last_num': 1, '_id': 0, 'date_time': {'$substrBytes': ["$date_time", 0, 6]}}},
-                                          {'$match': {'date_time': date, 'server': server}}])
+    tmp = mongo_db['last_num'].aggregate([{'$project': {'server': 1, 'last_num': 1, '_id': 0, 'date': {'$substrBytes': ["$date_time", 0, 6]}}},
+                                          {'$match': {'date': date, 'server': server}}])
     try:
         return tmp.next()['last_num']
     except StopIteration:
@@ -314,15 +314,14 @@ def main(log_name):
         if not line_res:
             invalid += 1
             continue
-        date_time = line_res['time_local'].split(':')
-        date = date_time[0]
-        hour = date_time[1]
-        minute = date_time[2]
+        time_local_list = line_res['time_local'].split(':')
+        date, hour, minute = time_local_list[0:3]
 
         # 分钟粒度交替时: 从临时字典中汇总上一分钟的结果并将其入库
         if this_h_m != '' and this_h_m != hour + minute:
+            date_time = y_m_d + this_h_m
             minute_main_doc = {
-                '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
+                '_id': date_time + '-' + choice(random_char) + choice(random_char) + '-' + server,
                 'total_hits': processed_num,
                 'invalid_hits': invalid,
                 'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
@@ -334,7 +333,7 @@ def main(log_name):
             # 执行插入操作(每分钟的最终结果)
             if len(bulk_documents) == 100:  # bulk_documents中累积100个文档之后再执行一次批量插入
                 try:
-                    insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d + this_h_m)
+                    insert_mongo(mongo_db, bulk_documents, log_name, n, date_time)
                     bulk_documents = []
                 except:
                     return  # 这里用exit无法退出主程序
@@ -351,6 +350,7 @@ def main(log_name):
         if date == log_date_ori:
             y_m_d = log_date
         else:
+            # 对应一个日志文件中包含跨天日志内容的情况
             d_m_y = date.split('/')
             y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
         this_h_m = hour + minute
@@ -359,8 +359,9 @@ def main(log_name):
 
     # 对最后一部分未能满足分钟交替条件的日志进行处理
     if processed_num > 0:
+        date_time = y_m_d + this_h_m
         minute_main_doc = {
-            '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
+            '_id': date_time + '-' + choice(random_char) + choice(random_char) + '-' + server,
             'total_hits': processed_num,
             'invalid_hits': invalid,
             'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
@@ -370,7 +371,12 @@ def main(log_name):
         minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
         bulk_documents.append(minute_main_doc)
         try:
-            insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d)
+            insert_mongo(mongo_db, bulk_documents, log_name, n, date_time)
+        except:
+            return
+    if bulk_documents:
+        try:
+            insert_mongo(mongo_db, bulk_documents, log_name, n, date_time)
         except:
             return
 
