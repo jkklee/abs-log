@@ -1,5 +1,7 @@
 #!/bin/env python3
 # -*- coding:utf-8 -*-
+# Collect nginx access log, process it and insert the result into mongodb.
+# This script should be put in crontab in every web server.Execute every n minutes.
 """
 ljk 20161116(update 20170510)
 This script should be put in crontab in every web server.Execute every n minutes.
@@ -228,16 +230,16 @@ def append_line_to_main_stage(line_res, main_stage):
                             sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
         
 
-def insert_mongo(mongo_db_obj, bulk_doc, l_name, num, date):
+def insert_mongo(mongo_db_obj, bulk_doc, l_name, num, ymdhm):
     """插入mongodb, 在主进程中根据函数返回值来决定是否退出对日志文件的循环, 进而退出主进程
     bulk_doc: 由每分钟文档组成的批量插入的数组
     l_name: 日志文件
     num: 当前已入库的行数
-    date: 日志中的日期,格式 170515
+    ymdhm: 日志中的日期,格式 1705150101(17年05月15日01时01分)
     """
     try:
         mongo_db_obj['main'].insert_many(bulk_doc)  # 插入数据
-        mongo_db_obj['last_num'].update({'$and': [{'server': server}, {'date': date}]}, {'$set': {'last_num': num}}, upsert=True)
+        mongo_db_obj['last_num'].update({'$and': [{'server': server}, {'date_time': ymdhm}]}, {'$set': {'last_num': num}}, upsert=True)
     except Exception as err:
         logger.error('{}: insert data error: {}'.format(l_name, err))
         raise
@@ -249,12 +251,12 @@ def get_prev_num(l_name, date):
     """取得本server今天已入库的行数
     l_name:日志文件名
     date: 日志中的日期,格式 170515"""
+    tmp = mongo_db['last_num'].aggregate([{'$project': {'server': 1, 'last_num': 1, '_id': 0, 'date_time': {'$substrBytes': ["$date_time", 0, 6]}}},
+                                          {'$match': {'date_time': date, 'server': server}}])
     try:
-        tmp = mongo_db['last_num'].find({'date': date, 'server': server}, {'last_num': 1, '_id': 0})
-        if tmp.count() == 1:
-            return tmp.next()['last_num']
-        elif tmp.count() == 0:
-            return 0
+        return tmp.next()['last_num']
+    except StopIteration:
+        return 0
     except Exception as err:
         logger.error("{}: get 'last_num' of {} at {} error, skip: {}".format(l_name, server, date, err))
 
@@ -269,7 +271,7 @@ def del_old_data(l_name, date, h_m):
     min_date = get_delta_date(date, LIMIT)
     try:
         mongo_db['main'].remove({'_id': {'$lt': min_date}})
-        mongo_db['last_num'].remove({'date': {'$lt': min_date}})
+        mongo_db['last_num'].remove({'date_time': {'$lt': min_date}})
     except Exception as err:
         logger.error("{}: delete documents before {} days error: {}".format(l_name, LIMIT, err))
 
@@ -332,7 +334,7 @@ def main(log_name):
             # 执行插入操作(每分钟的最终结果)
             if len(bulk_documents) == 100:  # bulk_documents中累积100个文档之后再执行一次批量插入
                 try:
-                    insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d)
+                    insert_mongo(mongo_db, bulk_documents, log_name, n, y_m_d + this_h_m)
                     bulk_documents = []
                 except:
                     return  # 这里用exit无法退出主程序
@@ -386,9 +388,10 @@ if __name__ == "__main__":
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             exit(11)
-        # 以上5行为实现单例模式
+        # 以上5行为实现单例执行
         chdir(log_dir)
-        logs_list = [i for i in listdir(log_dir) if 'access' in i and path.isfile(i) and i.split('.access')[0] in todo]
+        # 日志文件名格式必须为xxx.access.log, 以便取得app(站点)名称xxx
+        logs_list = [i for i in listdir(log_dir) if '.access' in i and path.isfile(i) and i.split('.access')[0] in todo]
         if len(logs_list) > 0:
             try:
                 with Pool(len(logs_list)) as p:
