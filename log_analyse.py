@@ -239,7 +239,7 @@ def insert_mongo(mongo_db_obj, bulk_doc, l_name, num, ymdhm):
     """
     try:
         mongo_db_obj['main'].insert_many(bulk_doc)  # 插入数据
-        mongo_db_obj['last_num'].update({'$and': [{'server': server}, {'date_time': ymdhm}]}, {'$set': {'last_num': num}}, upsert=True)
+        mongo_db_obj['last_num'].update({'$and': [{'server': server}, {'date_time': {'$regex': '^'+ymdhm[:6]}}]}, {'$set': {'last_num': num, 'date_time': ymdhm}}, upsert=True)
     except Exception as err:
         logger.error('{}: insert data error: {}'.format(l_name, err))
         raise
