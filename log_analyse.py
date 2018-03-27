@@ -18,7 +18,7 @@ from sys import exit
 import fcntl
 import logging
 
-logging.basicConfig(format='%(asctime)s %(levelname)8s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+logging.basicConfig(format='%(asctime)s %(levelname)8s: %(message)s', datefmt='%y-%m-%d %H:%M:%S')
 logger = logging.getLogger(__name__)
 logger.setLevel('INFO')
 
@@ -40,49 +40,47 @@ def process_line(line_str):
         '''如果正则根本就无法匹配该行记录时'''
         logger.warning("Can't process this line: {}".format(line_str))
         return
-    else:
-        # remote_addr字段在有反向代理的情况下多数时候是无意义的(仅代表反向代理的ip),
-        # 除非：以nginx为例,配置了set_real_ip_from和real_ip_header指令
-        remote_addr = processed.group('remote_addr')
-        time_local = processed.group('time_local')
+    # remote_addr字段在有反向代理的情况下多数时候是无意义的(仅代表反向代理的ip),
+    # 除非：以nginx为例,配置了set_real_ip_from和real_ip_header指令
+    remote_addr = processed.group('remote_addr')
+    time_local = processed.group('time_local')
 
-        # 处理uri和args
-        request = processed.group('request')
-        request_further = request_uri_pattern_obj.search(request)
-        if request_further:
-            request_method = request_further.group('request_method')
-            request_uri = request_further.group('request_uri')
-            # 对uri和args进行抽象化
-            uri_abs, args_abs = text_abstract(request_uri, site_name)
-        else:
-            logger.warning('$request abnormal: {}'.format(line_str))
-            return
+    # 处理uri和args
+    request = processed.group('request')
+    request_further = request_uri_pattern_obj.search(request)
+    if not request_further:
+        logger.warning('$request abnormal: {}'.format(line_str))
+        return
+    request_method = request_further.group('request_method')
+    request_uri = request_further.group('request_uri')
+    # 对uri和args进行抽象化
+    uri_abs, args_abs = text_abstract(request_uri, site_name)
 
-        # 状态码, 字节数, 响应时间
-        response_code = processed.group('status')
-        bytes_sent = processed.group('body_bytes_sent')
-        try:
-            request_time = processed.group('request_time')
-        except IndexError:
-            '''正则中无(?P <request_time>.* ?)段'''
-            request_time = None
-        try:
-            http_x_forwarded_for = processed.group('http_x_forwarded_for')
-            # 通过remote_addr和user_ip可分析出请求来源的三种情况
-            # 1.直达server(last_cdn_ip='-',user_ip='-',)
-            # 2.未经cdn,直达reverse_proxy(remote_addr == user_ip)
-            # 3.经cdn(remote_addr != user_ip)
-            ips = http_x_forwarded_for.split()
-            user_ip = ips[0].rstrip(',')
-            last_cdn_ip = ips[-1]
-        except IndexError:
-            '''正则中无(?P<http_x_forwarded_for>.*)段'''
-            user_ip = None
-            last_cdn_ip = None
+    # 状态码, 字节数, 响应时间
+    response_code = processed.group('status')
+    bytes_sent = processed.group('body_bytes_sent')
+    try:
+        request_time = processed.group('request_time')
+    except IndexError:
+        '''正则中无(?P <request_time>.* ?)段'''
+        request_time = None
+    try:
+        http_x_forwarded_for = processed.group('http_x_forwarded_for')
+        # 通过remote_addr和user_ip可分析出请求来源的三种情况
+        # 1.直达server(last_cdn_ip='-',user_ip='-',)
+        # 2.未经cdn,直达reverse_proxy(remote_addr == user_ip)
+        # 3.经cdn(remote_addr != user_ip)
+        ips = http_x_forwarded_for.split()
+        user_ip = ips[0].rstrip(',')
+        last_cdn_ip = ips[-1]
+    except IndexError:
+        '''正则中无(?P<http_x_forwarded_for>.*)段'''
+        user_ip = None
+        last_cdn_ip = None
 
-        return {'uri_abs': uri_abs, 'args_abs': args_abs, 'time_local': time_local, 'response_code': response_code,
-                'bytes_sent': int(bytes_sent), 'request_time': float(request_time), 'remote_addr': remote_addr,
-                'user_ip': user_ip, 'last_cdn_ip': last_cdn_ip, 'request_method': request_method, 'request_uri': request_uri}
+    return {'uri_abs': uri_abs, 'args_abs': args_abs, 'time_local': time_local, 'response_code': response_code,
+            'bytes_sent': int(bytes_sent), 'request_time': float(request_time), 'remote_addr': remote_addr,
+            'user_ip': user_ip, 'last_cdn_ip': last_cdn_ip, 'request_method': request_method, 'request_uri': request_uri}
 
 
 def get_log_date(fp):
@@ -100,7 +98,7 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
     一个uri_abs在minute_main_doc中对应的格式如下"""
     uris = []
     if len(main_stage) > URI_STORE_MAX_NUM:
-        logger.warning("{}: truncate uri_abs reverse sorted by 'hits' from {} to {} at {}".format(log_name, len(main_stage), URI_STORE_MAX_NUM, this_h_m))
+        logger.warning("{} truncate uri_abs sorted by 'hits' from {} to {} at {}".format(log_name, len(main_stage), URI_STORE_MAX_NUM, this_h_m))
     for uri_k, uri_v in sorted(main_stage.items(), key=lambda item: item[1]['hits'], reverse=True)[:URI_STORE_MAX_NUM]:
         '''取点击量前URI_STORE_MAX_NUM的uri_abs'''
         if uri_v['hits'] < URI_STORE_MIN_HITS:
@@ -150,7 +148,7 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
             ip_type: user_ip_via_cdn, last_cdn_ip, user_ip_via_proxy, remote_addr"""
             nonlocal single_uri_dict
             if len(uri_v[ip_type]) > IP_STORE_MAX_NUM:
-                logger.warning("{}:{} truncate user_ip_via_cdn reverse sorted by 'hits' from {} to {} at {}".format(
+                logger.warning("{} {} truncate user_ip_via_cdn sorted by 'hits' from {} to {} at {}".format(
                     log_name, uri_k, len(main_stage[uri_k][ip_type]), IP_STORE_MAX_NUM, this_h_m))
             for ip_k, ip_v in sorted(uri_v[ip_type].items(), key=lambda item: item[1]['hits'], reverse=True)[:IP_STORE_MAX_NUM]:
                 '''取ip类型为ip_type的统计中点击量前IP_STORE_MAX_NUM的user_ip_via_cdn'''
@@ -230,10 +228,9 @@ def append_line_to_main_stage(line_res, main_stage):
                             sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
         
 
-def insert_mongo(mongo_db_obj, bulk_doc, l_name, num, ymdhm):
+def insert_mongo(mongo_db_obj, bulk_doc, log_name, num, ymdhm):
     """插入mongodb, 在主进程中根据函数返回值来决定是否退出对日志文件的循环, 进而退出主进程
     bulk_doc: 由每分钟文档组成的批量插入的数组
-    l_name: 日志文件
     num: 当前已入库的行数
     ymdhm: 日志中的日期,格式 1705150101(17年05月15日01时01分)
     """
@@ -241,7 +238,7 @@ def insert_mongo(mongo_db_obj, bulk_doc, l_name, num, ymdhm):
         mongo_db_obj['main'].insert_many(bulk_doc)  # 插入数据
         mongo_db_obj['last_num'].update({'$and': [{'server': server}, {'date_time': {'$regex': '^'+ymdhm[:6]}}]}, {'$set': {'last_num': num, 'date_time': ymdhm}}, upsert=True)
     except Exception as err:
-        logger.error('{}: insert data error: {}'.format(l_name, err))
+        logger.error('{} insert data error: {}'.format(log_name, err))
         raise
     finally:
         mongo_client.close()
@@ -261,9 +258,8 @@ def get_prev_num(l_name, date):
         logger.error("{}: get 'last_num' of {} at {} error, skip: {}".format(l_name, server, date, err))
 
 
-def del_old_data(l_name, date, h_m):
+def del_old_data(log_name, date, h_m):
     """删除N天前的数据, 默认为LIMIT
-    l_name: 日志文件名
     date: 日期, 格式180315
     h_m: 当前hour and minute(到23:59时执行清理操作)"""
     if h_m != '2359':
@@ -273,7 +269,7 @@ def del_old_data(l_name, date, h_m):
         mongo_db['main'].remove({'_id': {'$lt': min_date}})
         mongo_db['last_num'].remove({'date_time': {'$lt': min_date}})
     except Exception as err:
-        logger.error("{}: delete documents before {} days error: {}".format(l_name, LIMIT, err))
+        logger.error("{} delete documents before {} days error: {}".format(log_name, LIMIT, err))
 
 
 def main(log_name):
@@ -330,14 +326,13 @@ def main(log_name):
                 'source': main_stage.pop('source')}  # 此处必须用pop，以保证下一行中引用的main_stage只包含以uri_abs为key的结构
             minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
             bulk_documents.append(minute_main_doc)
-            # 执行插入操作(每分钟的最终结果)
             if len(bulk_documents) == 100:  # bulk_documents中累积100个文档之后再执行一次批量插入
                 try:
                     insert_mongo(mongo_db, bulk_documents, log_name, n, date_time)
                     bulk_documents = []
                 except:
                     return  # 这里用exit无法退出主程序
-            # 清空临时字典main_stage和invalid
+            # 清空临时字典main_stage, invalid, processed_num
             processed_num = 0
             main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
                                      'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
