@@ -244,18 +244,19 @@ def insert_mongo(mongo_db_obj, bulk_doc, log_name, num, ymdhm):
         mongo_client.close()
 
 
-def get_prev_num(l_name, date):
-    """取得本server今天已入库的行数
-    l_name:日志文件名
+def get_prev_info(log_name, date):
+    """取得本server在date这一天已入库的行数和日志中最后的时间
     date: 日志中的日期,格式 170515"""
-    tmp = mongo_db['last_num'].aggregate([{'$project': {'server': 1, 'last_num': 1, '_id': 0, 'date': {'$substrBytes': ["$date_time", 0, 6]}}},
+    tmp = mongo_db['last_num'].aggregate([{'$project': {'server': 1, 'last_num': 1, 'date_time': 1, 'date': {'$substrBytes': ["$date_time", 0, 6]}}},
                                           {'$match': {'date': date, 'server': server}}])
     try:
-        return tmp.next()['last_num']
+        res = tmp.next()
+        return res['last_num'], res['date_time']
     except StopIteration:
-        return 0
+        return 0, ''
     except Exception as err:
-        logger.error("{}: get 'last_num' of {} at {} error, skip: {}".format(l_name, server, date, err))
+        logger.error("{} get 'last_num' of {} at {} error, skip: {}".format(log_name, server, date, err))
+        raise
 
 
 def del_old_data(log_name, date, h_m):
@@ -291,9 +292,12 @@ def main(log_name):
     log_date_ori, log_date = get_log_date(fp)
     # 当前日志文件总行数
     cur_num = int(run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=PIPE, universal_newlines=True).stdout.split()[0])
-    # 上一次处理到的行数
-    prev_num = get_prev_num(log_name, log_date)
-    if prev_num is None or cur_num <= prev_num:
+    try:
+        # 上一次处理到的行数和时间
+        last_num, last_date_time = get_prev_info(log_name, log_date)
+    except:
+        return
+    if cur_num <= last_num:
         return
     # 根据当前行数和mongodb中记录的last_num对比, 决定本次要处理的行数范围
     n = processed_num = 0
