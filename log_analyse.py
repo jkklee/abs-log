@@ -369,10 +369,6 @@ def main(log_name):
             'source': main_stage.pop('source')}
         minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
         bulk_documents.append(minute_main_doc)
-        try:
-            insert_mongo(mongo_db, bulk_documents, log_name, n, date_time)
-        except:
-            return
     if bulk_documents:
         try:
             insert_mongo(mongo_db, bulk_documents, log_name, n, date_time)
