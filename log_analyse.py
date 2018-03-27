@@ -303,12 +303,11 @@ def main(log_name):
     n = processed_num = 0
     for line_str in fp:
         n += 1
-        processed_num += 1
-        if n <= prev_num:
-            processed_num -= 1
+        if n <= last_num:
             continue
         elif n > cur_num:
             break
+
         # 开始处理
         line_res = process_line(line_str)
         if not line_res:
@@ -352,6 +351,7 @@ def main(log_name):
             # 对应一个日志文件中包含跨天日志内容的情况
             d_m_y = date.split('/')
             y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
+        processed_num += 1
         this_h_m = hour + minute
         # 调用append_line_to_main_stage函数处理每一行
         append_line_to_main_stage(line_res, main_stage)
