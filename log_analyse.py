@@ -79,14 +79,22 @@ def process_line(line_str):
             'user_ip': user_ip, 'last_cdn_ip': last_cdn_ip, 'request_method': request_method, 'request_uri': request_uri}
 
 
-def get_log_date(fp):
-    """从日志文件中读取第一行, 获取日志产生的日期时间"""
-    line_res = process_line(fp.readline().rstrip('\n'))
-    date = line_res['time_local'].split(':')[0]
-    d_m_y = date.split('/')
-    y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
-    fp.seek(0)
-    return date, y_m_d
+def get_log_date(fp, log_name):
+    """从日志文件获取日志产生的日期时间, 最多读 5 行"""
+    n = 1
+    while n <= 5:
+        n += 1
+        line_res = process_line(fp.readline().rstrip('\n'))
+        if line_res:
+            try:
+                date = line_res['time_local'].split(':')[0]
+                d_m_y = date.split('/')
+                y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
+                fp.seek(0)
+                return date, y_m_d
+            except Exception as err:
+                raise Exception('get_log_date() {} {}'.format(log_name, err))
+    raise Exception("{} can't parse the first five lines, will exit. check log content and 'log_pattern'".format(log_name))
 
 
 def get_prev_info(date):
@@ -261,6 +269,9 @@ def append_line_to_main_stage(line_res, main_stage):
 
 def main(log_name):
     """log_name:日志文件名"""
+    if '.access' not in log_name:
+        logger.error("the format of log file name should be 'xxx.access[.log]'")
+        return
     global site_name
     site_name = log_name.split('.access')[0].replace('.', '')  # 即mongodb中的库名(将域名中的.去掉)
     invalid = 0  # 无效请求数
@@ -272,17 +283,17 @@ def main(log_name):
     this_h_m = ''  # 当前处理的一分钟, 格式: 0101(1时1分)
     my_connect(site_name)
 
-    # 开始处理逻辑
-    fp = open(log_name)
-    log_date_ori, log_date = get_log_date(fp)
-    # 当前日志文件总行数
-    cur_num = int(run('wc -l {}'.format(log_dir + log_name), shell=True, stdout=PIPE, universal_newlines=True).stdout.split()[0])
     try:
-        # 上一次处理到的行数和时间
-        last_num, last_date_time = get_prev_info(log_name, log_date)
-    except:
+        fp = open(log_name)
+        # 当前日志文件总行数
+        cur_num = int(run('wc -l {}'.format(log_name), shell=True, stdout=PIPE, universal_newlines=True).stdout.split()[0])
+        log_date_ori, log_date = get_log_date(fp, log_name)
+        last_num, last_date_time = get_prev_info(log_date)  # 上一次处理到的行数和时间
+    except (FileNotFoundError, PermissionError, IsADirectoryError) as err:
+        logger.error(log_name, str(err))
         return
-    if cur_num <= last_num:
+    except Exception as err:
+        logger.error(str(err))
         return
     # 根据当前行数和mongodb中记录的last_num对比, 决定本次要处理的行数范围
     n = processed_num = 0
@@ -315,9 +326,9 @@ def main(log_name):
             bulk_documents.append(minute_main_doc)
             if len(bulk_documents) == 100:  # bulk_documents中累积100个文档之后再执行一次批量插入
                 try:
-                    insert_mongo(mongo_db, bulk_documents, log_name, n, date_time)
+                    insert_mongo(mongo_db, bulk_documents, n, y_m_d + this_h_m)
                     bulk_documents = []
-                except:
+                except Exception:
                     return  # 这里用exit无法退出主程序
             # 清空临时字典main_stage, invalid, processed_num
             processed_num = 0
@@ -354,19 +365,17 @@ def main(log_name):
         bulk_documents.append(minute_main_doc)
     if bulk_documents:
         try:
-            insert_mongo(mongo_db, bulk_documents, log_name, n, date_time)
-        except:
+            insert_mongo(mongo_db, bulk_documents, n, y_m_d + this_h_m)
+        except Exception:
             return
-
-    del_old_data(log_name, y_m_d, this_h_m)
+    if this_h_m:
+        del_old_data(y_m_d, this_h_m)
 
 
 if __name__ == "__main__":
-    come_from_cdn = come_from_proxy = come_from_user = 0
     server = gethostname()  # 主机名
     log_pattern_obj = re.compile(log_pattern)
     request_uri_pattern_obj = re.compile(request_uri_pattern)
-
     with open('/tmp/test_singleton', 'wb') as f:
         try:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # 实现单例执行
