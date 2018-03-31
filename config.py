@@ -10,9 +10,13 @@ request_uri_pattern = r'^(?P<request_method>(GET|POST|HEAD|DELETE|PUT|OPTIONS)?)
                       r'(?P<server_protocol>.*)$'
 
 # ----日志相关
+# 日志文件名格式必须为xxx.access[.log], 以便取得站点名称xxx(通过以'.access'进行分割取得)
 log_dir = '/data/nginx_log/'
 # 要处理的站点(按需添加)
 todo = ['www', 'm', 'user']
+
+# 错误日志级别(DEBUG, INFO, WARNING, ERROR)
+error_level = 'DEBUG'
 
 # ----mongodb
 # 链接设置

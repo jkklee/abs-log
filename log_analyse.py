@@ -1,12 +1,8 @@
 #!/bin/env python3
 # -*- coding:utf-8 -*-
 # Collect nginx access log, process it and insert the result into mongodb.
-# This script should be put in crontab in every web server.Execute every n minutes.
-"""
-ljk 20161116(update 20170510)
-This script should be put in crontab in every web server.Execute every n minutes.
-Collect nginx access log, process it and insert the result into mysql.
-"""
+# This script should put into crontab in every web server. Execute every N minutes.
+
 from config import *
 from common.common import *
 from socket import gethostname
@@ -20,7 +16,7 @@ import logging
 
 logging.basicConfig(format='%(asctime)s %(levelname)8s: %(message)s', datefmt='%y-%m-%d %H:%M:%S')
 logger = logging.getLogger(__name__)
-logger.setLevel('INFO')
+logger.setLevel(error_level)
 
 
 def my_connect(db_name):
@@ -37,8 +33,8 @@ def process_line(line_str):
     """
     processed = log_pattern_obj.search(line_str)
     if not processed:
-        '''如果正则根本就无法匹配该行记录时'''
-        logger.warning("Can't process this line: {}".format(line_str))
+        # 如果正则根本就无法匹配该行记录时
+        logger.warning("Can't parse line: {}".format(line_str))
         return
     # remote_addr字段在有反向代理的情况下多数时候是无意义的(仅代表反向代理的ip),
     # 除非：以nginx为例,配置了set_real_ip_from和real_ip_header指令
@@ -62,7 +58,7 @@ def process_line(line_str):
     try:
         request_time = processed.group('request_time')
     except IndexError:
-        '''正则中无(?P <request_time>.* ?)段'''
+        # 正则中无(?P <request_time>.* ?)段
         request_time = None
     try:
         http_x_forwarded_for = processed.group('http_x_forwarded_for')
@@ -74,7 +70,7 @@ def process_line(line_str):
         user_ip = ips[0].rstrip(',')
         last_cdn_ip = ips[-1]
     except IndexError:
-        '''正则中无(?P<http_x_forwarded_for>.*)段'''
+        # 正则中无(?P<http_x_forwarded_for>.*)段
         user_ip = None
         last_cdn_ip = None
 
@@ -93,14 +89,58 @@ def get_log_date(fp):
     return date, y_m_d
 
 
+def get_prev_info(date):
+    """取得本server在date这一天已入库的行数和日志中最后的时间
+    date: 日志中的日期,格式 170515"""
+    tmp = mongo_db['last_num'].aggregate([{'$project': {'server': 1, 'last_num': 1, 'date_time': 1, 'date': {'$substrBytes': ["$date_time", 0, 6]}}},
+                                          {'$match': {'date': date, 'server': server}}])
+    try:
+        res = tmp.next()
+        return res['last_num'], res['date_time']
+    except StopIteration:
+        return 0, ''
+    except Exception as err:
+        raise Exception("{} get 'last_num' of {} at {} error, will exit: {}".format(site_name, server, date, err))
+
+
+def insert_mongo(mongo_db_obj, bulk_doc, num, ymdhm):
+    """插入mongodb
+    bulk_doc: 由每分钟文档组成的批量插入的数组
+    num: 当前已入库的行数
+    ymdhm: 日志中的日期,格式 1705150101(17年05月15日01时01分)
+    """
+    try:
+        mongo_db_obj['main'].insert_many(bulk_doc)  # 插入数据
+        mongo_db_obj['last_num'].update({'$and': [{'server': server}, {'date_time': {'$regex': '^'+ymdhm[:6]}}]}, {'$set': {'last_num': num, 'date_time': ymdhm}}, upsert=True)
+    except Exception as err:
+        logger.error('{} insert data error: {}'.format(site_name, err))
+        raise
+    finally:
+        mongo_client.close()
+
+
+def del_old_data(date, h_m):
+    """删除N天前的数据, 默认为LIMIT
+    date: 日期, 格式180315
+    h_m: 当前hour and minute(到23:59时执行清理操作)"""
+    if h_m != '2359':
+        return
+    min_date = get_delta_date(date, LIMIT)
+    try:
+        mongo_db['main'].remove({'_id': {'$lt': min_date}})
+        mongo_db['last_num'].remove({'date_time': {'$lt': min_date}})
+    except Exception as err:
+        logger.error("{} delete documents before {} days error: {}".format(site_name, LIMIT, err))
+
+
 def final_uri_dicts(main_stage, log_name, this_h_m):
-    """对main_stage里的原始数据进行整合生成每个uri_abs对应的字典,插入到minute_main_doc['request']中, 生成最终存储到mongodb的文档
+    """对main_stage里的原始数据进行整合生成每个uri_abs对应的字典, 插入到minute_main_doc['request']中, 生成最终存储到mongodb的文档
     一个uri_abs在minute_main_doc中对应的格式如下"""
     uris = []
     if len(main_stage) > URI_STORE_MAX_NUM:
-        logger.warning("{} truncate uri_abs sorted by 'hits' from {} to {} at {}".format(log_name, len(main_stage), URI_STORE_MAX_NUM, this_h_m))
+        logger.debug("{} truncate uri_abs sorted by 'hits' from {} to {} at {}".format(log_name, len(main_stage), URI_STORE_MAX_NUM, this_h_m))
     for uri_k, uri_v in sorted(main_stage.items(), key=lambda item: item[1]['hits'], reverse=True)[:URI_STORE_MAX_NUM]:
-        '''取点击量前URI_STORE_MAX_NUM的uri_abs'''
+        # 取点击量前URI_STORE_MAX_NUM的uri_abs
         if uri_v['hits'] < URI_STORE_MIN_HITS:
             break
         uri_quartile_time = get_quartile(uri_v['time'])
@@ -122,7 +162,7 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
                            'args': [],
                            'ips': []}
         for arg_k, arg_v in uri_v['args'].items():
-            '''取点击量前MAX_ARG_NUM的args_abs'''
+            # 取点击量前MAX_ARG_NUM的args_abs
             arg_quartile_time = get_quartile(arg_v['time'])
             arg_quartile_bytes = get_quartile(arg_v['bytes'])
             single_arg_dict = {'args_abs': arg_k,
@@ -148,10 +188,10 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
             ip_type: user_ip_via_cdn, last_cdn_ip, user_ip_via_proxy, remote_addr"""
             nonlocal single_uri_dict
             if len(uri_v[ip_type]) > IP_STORE_MAX_NUM:
-                logger.warning("{} {} truncate user_ip_via_cdn sorted by 'hits' from {} to {} at {}".format(
+                logger.debug("{} {} truncate user_ip_via_cdn sorted by 'hits' from {} to {} at {}".format(
                     log_name, uri_k, len(main_stage[uri_k][ip_type]), IP_STORE_MAX_NUM, this_h_m))
             for ip_k, ip_v in sorted(uri_v[ip_type].items(), key=lambda item: item[1]['hits'], reverse=True)[:IP_STORE_MAX_NUM]:
-                '''取ip类型为ip_type的统计中点击量前IP_STORE_MAX_NUM的user_ip_via_cdn'''
+                # 取ip类型为ip_type的统计中点击量前IP_STORE_MAX_NUM的user_ip_via_cdn
                 if ip_v['hits'] < IP_STORE_MIN_HITS:
                     break
                 single_ip_dict = {'ip': ip_k, 'hits': ip_v['hits'], 'time': round(ip_v['time'], 3),
@@ -173,38 +213,29 @@ def append_line_to_main_stage(line_res, main_stage):
     user_ip = line_res['user_ip']
     last_cdn_ip = line_res['last_cdn_ip']
     remote_addr = line_res['remote_addr']
-
+    response_code = line_res['response_code']
     # 将该行数据汇总至临时字典
     if uri_abs in main_stage:
         special_insert_list(main_stage[uri_abs]['time'], line_res['request_time'])
         special_insert_list(main_stage[uri_abs]['bytes'], line_res['bytes_sent'])
         main_stage[uri_abs]['hits'] += 1
     else:
-        main_stage[uri_abs] = {'time': [line_res['request_time']],
-                               'bytes': [line_res['bytes_sent']],
-                               'hits': 1,
-                               'args': {},
-                               'user_ip_via_cdn': {},
-                               'last_cdn_ip': {},
-                               'user_ip_via_proxy': {},
-                               'remote_addr': {}}
+        main_stage[uri_abs] = {'time': [line_res['request_time']], 'bytes': [line_res['bytes_sent']],
+                               'hits': 1, 'args': {}, 'user_ip_via_cdn': {}, 'last_cdn_ip': {}, 'user_ip_via_proxy': {}, 'remote_addr': {}}
     # 将args数据汇总到临时字典
     if args_abs in main_stage[uri_abs]['args']:
         main_stage[uri_abs]['args'][args_abs]['time'].append(line_res['request_time'])
         main_stage[uri_abs]['args'][args_abs]['bytes'].append(line_res['bytes_sent'])
         main_stage[uri_abs]['args'][args_abs]['hits'] += 1
-        # http错误码
-        if int(line_res['response_code']) >= 400:
+        if response_code >= '400':  # http错误码
             special_update_dict(main_stage[uri_abs]['args'][args_abs]['error_code'], line_res['response_code'], 1)
     else:
-        main_stage[uri_abs]['args'][args_abs] = {'time': [line_res['request_time']],
-                                                 'bytes': [line_res['bytes_sent']],
-                                                 'hits': 1,
-                                                 'method': line_res['request_method'],
-                                                 'error_code': {line_res['response_code']: 1} if int(line_res['response_code']) >= 400 else {}}
+        main_stage[uri_abs]['args'][args_abs] = {'time': [line_res['request_time']], 'bytes': [line_res['bytes_sent']],
+                                                 'hits': 1, 'method': line_res['request_method'],
+                                                 'error_code': {response_code: 1} if response_code >= '400' else {}}
     # 将ip信息汇总到临时字典
     if user_ip != '-' and user_ip != last_cdn_ip:
-        '''come from cdn'''
+        # come from cdn
         main_stage['source']['from_cdn']['hits'] += 1
         main_stage['source']['from_cdn']['bytes'] += line_res['bytes_sent']
         main_stage['source']['from_cdn']['time'] += line_res['request_time']
@@ -213,78 +244,32 @@ def append_line_to_main_stage(line_res, main_stage):
         special_update_dict(main_stage[uri_abs]['last_cdn_ip'], last_cdn_ip, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
                             sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
     elif user_ip != '-' and user_ip == last_cdn_ip:
-        '''come from reverse_proxy'''
+        # come from reverse_proxy
         main_stage['source']['from_reverse_proxy']['hits'] += 1
         main_stage['source']['from_reverse_proxy']['bytes'] += line_res['bytes_sent']
         main_stage['source']['from_reverse_proxy']['time'] += line_res['request_time']
         special_update_dict(main_stage[uri_abs]['user_ip_via_proxy'], user_ip, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
                             sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
     elif user_ip == '-' and user_ip == last_cdn_ip:
-        '''come from user directly'''
+        # come from user directly
         main_stage['source']['from_client_directly']['hits'] += 1
         main_stage['source']['from_client_directly']['bytes'] += line_res['bytes_sent']
         main_stage['source']['from_client_directly']['time'] += line_res['request_time']
         special_update_dict(main_stage[uri_abs]['remote_addr'], remote_addr, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
                             sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
-        
-
-def insert_mongo(mongo_db_obj, bulk_doc, log_name, num, ymdhm):
-    """插入mongodb, 在主进程中根据函数返回值来决定是否退出对日志文件的循环, 进而退出主进程
-    bulk_doc: 由每分钟文档组成的批量插入的数组
-    num: 当前已入库的行数
-    ymdhm: 日志中的日期,格式 1705150101(17年05月15日01时01分)
-    """
-    try:
-        mongo_db_obj['main'].insert_many(bulk_doc)  # 插入数据
-        mongo_db_obj['last_num'].update({'$and': [{'server': server}, {'date_time': {'$regex': '^'+ymdhm[:6]}}]}, {'$set': {'last_num': num, 'date_time': ymdhm}}, upsert=True)
-    except Exception as err:
-        logger.error('{} insert data error: {}'.format(log_name, err))
-        raise
-    finally:
-        mongo_client.close()
-
-
-def get_prev_info(log_name, date):
-    """取得本server在date这一天已入库的行数和日志中最后的时间
-    date: 日志中的日期,格式 170515"""
-    tmp = mongo_db['last_num'].aggregate([{'$project': {'server': 1, 'last_num': 1, 'date_time': 1, 'date': {'$substrBytes': ["$date_time", 0, 6]}}},
-                                          {'$match': {'date': date, 'server': server}}])
-    try:
-        res = tmp.next()
-        return res['last_num'], res['date_time']
-    except StopIteration:
-        return 0, ''
-    except Exception as err:
-        logger.error("{} get 'last_num' of {} at {} error, skip: {}".format(log_name, server, date, err))
-        raise
-
-
-def del_old_data(log_name, date, h_m):
-    """删除N天前的数据, 默认为LIMIT
-    date: 日期, 格式180315
-    h_m: 当前hour and minute(到23:59时执行清理操作)"""
-    if h_m != '2359':
-        return
-    min_date = get_delta_date(date, LIMIT)
-    try:
-        mongo_db['main'].remove({'_id': {'$lt': min_date}})
-        mongo_db['last_num'].remove({'date_time': {'$lt': min_date}})
-    except Exception as err:
-        logger.error("{} delete documents before {} days error: {}".format(log_name, LIMIT, err))
 
 
 def main(log_name):
     """log_name:日志文件名"""
     global site_name
-    site_name = log_name.split('.access')[0].replace('.', '')  # 也即mongodb 中的库名(将域名中的.去掉)
-    invalid = 0  # 无效的请求数
-    # main_stage存储处理过程中用于保存一分钟内的各项原始数据
+    site_name = log_name.split('.access')[0].replace('.', '')  # 即mongodb中的库名(将域名中的.去掉)
+    invalid = 0  # 无效请求数
+    # main_stage: 存储处理过程中, 用于保存一分钟内的各项原始数据
     main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
                              'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
                              'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
-    bulk_documents = []  # 作为每分钟文档的容器, 当累积100个文档时, 进行一次批量插入
-    # 当前处理的一分钟(亦即mongodb文档_id键的一部分,初始为''),格式: 0101(1时1分).(对日志数据以分钟为粒度进行处理分析)
-    this_h_m = ''
+    bulk_documents = []  # 作为每分钟文档的容器, 累积100个文档时, 进行一次批量插入
+    this_h_m = ''  # 当前处理的一分钟, 格式: 0101(1时1分)
     my_connect(site_name)
 
     # 开始处理逻辑
@@ -313,8 +298,7 @@ def main(log_name):
         if not line_res:
             invalid += 1
             continue
-        time_local_list = line_res['time_local'].split(':')
-        date, hour, minute = time_local_list[0:3]
+        date, hour, minute = line_res['time_local'].split(':')[:3]
 
         # 分钟粒度交替时: 从临时字典中汇总上一分钟的结果并将其入库
         if this_h_m != '' and this_h_m != hour + minute:
@@ -353,10 +337,9 @@ def main(log_name):
             y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
         processed_num += 1
         this_h_m = hour + minute
-        # 调用append_line_to_main_stage函数处理每一行
-        append_line_to_main_stage(line_res, main_stage)
+        append_line_to_main_stage(line_res, main_stage)  # 对每一行的解析结果进行处理
 
-    # 对最后一部分未能满足分钟交替条件的日志进行处理
+    # 最后可能会存在一部分已解析但未达到分钟交替的行, 需要额外逻辑进行入库
     if processed_num > 0:
         date_time = y_m_d + this_h_m
         minute_main_doc = {
@@ -386,10 +369,9 @@ if __name__ == "__main__":
 
     with open('/tmp/test_singleton', 'wb') as f:
         try:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # 实现单例执行
         except BlockingIOError:
             exit(11)
-        # 以上5行为实现单例执行
         chdir(log_dir)
         # 日志文件名格式必须为xxx.access.log, 以便取得app(站点)名称xxx
         logs_list = [i for i in listdir(log_dir) if '.access' in i and path.isfile(i) and i.split('.access')[0] in todo]
