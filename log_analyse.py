@@ -283,6 +283,27 @@ def main(log_name):
     this_h_m = ''  # 当前处理的一分钟, 格式: 0101(1时1分)
     my_connect(site_name)
 
+    def generate_bulk_docs():
+        """生成每分钟的文档, 存放到bulk_documents中"""
+        minute_main_doc = {
+            '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
+            'total_hits': processed_num,
+            'invalid_hits': invalid,
+            'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
+            'total_time': round(main_stage['source']['from_cdn']['time'] + main_stage['source']['from_reverse_proxy']['time'] + main_stage['source']['from_client_directly']['time'], 3),
+            'requests': [],
+            'source': main_stage.pop('source')}
+        minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
+        bulk_documents.append(minute_main_doc)
+
+    def reset_every_minute():
+        nonlocal processed_num, main_stage, invalid
+        processed_num = 0
+        invalid = 0
+        main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
+                                 'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
+                                 'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
+    # 开始处理日志文件
     try:
         fp = open(log_name)
         # 当前日志文件总行数
@@ -313,29 +334,15 @@ def main(log_name):
 
         # 分钟粒度交替时: 从临时字典中汇总上一分钟的结果并将其入库
         if this_h_m != '' and this_h_m != hour + minute:
-            date_time = y_m_d + this_h_m
-            minute_main_doc = {
-                '_id': date_time + '-' + choice(random_char) + choice(random_char) + '-' + server,
-                'total_hits': processed_num,
-                'invalid_hits': invalid,
-                'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
-                'total_time': round(main_stage['source']['from_cdn']['time'] + main_stage['source']['from_reverse_proxy']['time'] + main_stage['source']['from_client_directly']['time'], 3),
-                'requests': [],
-                'source': main_stage.pop('source')}  # 此处必须用pop，以保证下一行中引用的main_stage只包含以uri_abs为key的结构
-            minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
-            bulk_documents.append(minute_main_doc)
-            if len(bulk_documents) == 100:  # bulk_documents中累积100个文档之后再执行一次批量插入
+            generate_bulk_docs()
+            if len(bulk_documents) == 100:  # 累积100个文档后执行一次批量插入
                 try:
                     insert_mongo(mongo_db, bulk_documents, n, y_m_d + this_h_m)
                     bulk_documents = []
                 except Exception:
                     return  # 这里用exit无法退出主程序
             # 清空临时字典main_stage, invalid, processed_num
-            processed_num = 0
-            main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
-                                     'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
-                                     'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
-            invalid = 0
+            reset_every_minute()
             logger.info('{} processed to {}'.format(log_name, line_res['time_local']))
 
         # 不到分钟粒度交替时:
@@ -352,18 +359,8 @@ def main(log_name):
 
     # 最后可能会存在一部分已解析但未达到分钟交替的行, 需要额外逻辑进行入库
     if processed_num > 0:
-        date_time = y_m_d + this_h_m
-        minute_main_doc = {
-            '_id': date_time + '-' + choice(random_char) + choice(random_char) + '-' + server,
-            'total_hits': processed_num,
-            'invalid_hits': invalid,
-            'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
-            'total_time': round(main_stage['source']['from_cdn']['time'] + main_stage['source']['from_reverse_proxy']['time'] + main_stage['source']['from_client_directly']['time'], 3),
-            'requests': [],
-            'source': main_stage.pop('source')}
-        minute_main_doc['requests'].extend(final_uri_dicts(main_stage, log_name, this_h_m))
-        bulk_documents.append(minute_main_doc)
-    if bulk_documents:
+        generate_bulk_docs()
+    if bulk_documents and this_h_m:
         try:
             insert_mongo(mongo_db, bulk_documents, n, y_m_d + this_h_m)
         except Exception:
