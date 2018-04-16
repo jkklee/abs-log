@@ -1,13 +1,7 @@
 # -*- coding:utf-8 -*-
-# ----日志格式
-# 利用非贪婪匹配和分组匹配, 需要严格参照日志定义中的分隔符和引号(编写正则时，先不要换行，确保空格或引号与日志格式一致，最后考虑美观可以折行)
-log_pattern = r'^(?P<remote_addr>.*?) - \[(?P<time_local>.*?) \+0800\] "(?P<request>.*?)"' \
-              r' (?P<status>.*?) (?P<body_bytes_sent>.*?) (?P<request_time>.*?)' \
-              r' "(?P<http_referer>.*?)" "(?P<http_user_agent>.*?)" - (?P<http_x_forwarded_for>.*)$'
-# request的正则, 其实是由 "request_method request_uri server_protocol"三部分组成
-request_uri_pattern = r'^(?P<request_method>(GET|POST|HEAD|DELETE|PUT|OPTIONS)?) ' \
-                      r'(?P<request_uri>.*?) ' \
-                      r'(?P<server_protocol>.*)$'
+# ----nginx配置文件中定义的日志格式
+log_format = '$remote_addr - [$time_local] "$request" $status $body_bytes_sent $request_time ' \
+             '"$http_referer" "$http_user_agent" - $http_x_forwarded_for'
 
 # ----日志相关
 # 日志文件名格式必须为xxx.access[.log], 以便取得站点名称xxx(通过以'.access'进行分割取得)
@@ -16,7 +10,7 @@ log_dir = '/data/nginx_log/'
 todo = ['www', 'm', 'user']
 
 # 错误日志级别(DEBUG, INFO, WARNING, ERROR)
-error_level = 'DEBUG'
+error_level = 'INFO'
 
 # ----mongodb
 # 链接设置
@@ -25,7 +19,7 @@ mongo_port = 27017
 # 存储设置
 # mongodb存储结构为每个站点对应一个库一个集合(main), 每分钟每server产生一个统计结果文档(即分析粒度最小达到分钟级)
 # 为了使mongodb数据集尽量小, 每分钟统计结果中, 取点击数前URI_STORE_MAX_NUM的uri进行入库,
-# 同时若uri在该分钟内点击数小于URI_STORE_MIN_HITS, 则该uri不予入库
+# 同时若uri_abs在该分钟内点击数小于URI_STORE_MIN_HITS, 则该uri_abs不予入库
 URI_STORE_MAX_NUM = 80
 URI_STORE_MIN_HITS = 5
 # ip统计, 每分钟统计结果中, 取点击数前IP_STORE_MAX_NUM的ip, 同时若ip在该分钟内点击数小于IP_STORE_MIN_HITS, 则该ip不予入库

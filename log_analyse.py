@@ -40,7 +40,7 @@ def process_line(line_str):
     处理每一行记录
     line_str: 该行日志的原始形式
     """
-    processed = log_pattern_obj.search(line_str)
+    processed = log_pattern_obj.match(line_str)
     if not processed:
         # 如果正则无法匹配该行时
         logger.warning("Can't parse line: {}".format(line_str))

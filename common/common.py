@@ -1,5 +1,5 @@
 # -*- coding:utf-8 -*-
-from config import mongo_host, mongo_port, abs_special
+from config import log_format, mongo_host, mongo_port, abs_special
 from urllib.parse import unquote
 import time
 from datetime import datetime, timedelta
@@ -25,6 +25,30 @@ def timer(func):
 
 
 # -----log_analyse使用----- #
+# 利用非贪婪匹配和分组匹配
+ngx_style_log_field_pattern = {'$remote_addr': '(?P<remote_addr>.*?)',
+                               '$time_local': '(?P<time_local>.*?)',
+                               '$request': '(?P<request>.*?)',
+                               '$status': '(?P<status>.*?)',
+                               '$body_bytes_sent': '(?P<body_bytes_sent>.*?)',
+                               '$request_time': '(?P<request_time>.*?)',
+                               '$http_referer': '(?P<http_referer>.*?)',
+                               '$http_user_agent': '(?P<http_user_agent>.*?)',
+                               '$http_x_forwarded_for': '(?P<http_x_forwarded_for>.*)',
+                               '$request_length': '(?P<request_length>.*?)',
+                               '$remote_user': '(?P<remote_user>.*?)',
+                               '$gzip_ratio': '(?P<gzip_ratio>.*?)',
+                               '$connection_requests': '(?P<connection_requests>.*?)'}
+# 通过log_format得到可以匹配整行日志的log_pattern
+for filed in log_format.replace('[', '').replace(']', '').replace('"', '').split():
+    if filed in ngx_style_log_field_pattern:
+        log_format = log_format.replace(filed, ngx_style_log_field_pattern[filed], 1)
+log_pattern = log_format.replace('[', '\[').replace(']', '\]')
+# $request的正则, 其实是由 "request_method request_uri server_protocol"三部分组成
+request_uri_pattern = r'^(?P<request_method>(GET|POST|HEAD|DELETE|PUT|OPTIONS)?) ' \
+                      r'(?P<request_uri>.*?) ' \
+                      r'(?P<server_protocol>.*)$'
+
 # 文档中_id字段中需要的随机字符串
 random_char = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
 # 快速转换月份格式
