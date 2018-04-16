@@ -302,7 +302,7 @@ def main(log_name):
     this_h_m = ''  # 当前处理的一分钟, 格式: 0101(1时1分)
     my_connect(site_name)
 
-    def generate_bulk_docs():
+    def generate_bulk_docs(y_m_d):
         """生成每分钟的文档, 存放到bulk_documents中"""
         minute_main_doc = {
             '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
@@ -362,7 +362,6 @@ def main(log_name):
             log_date = y_m_d
             last_num, last_date_time = get_prev_info(y_m_d)
             if this_h_m:
-                generate_bulk_docs()
                 #if bulk_documents:
                 try:
                     insert_mongo(mongo_db, bulk_documents, n - 1, log_date_prev + this_h_m)
@@ -374,6 +373,7 @@ def main(log_name):
             else:
                 n = 1
                 continue
+            generate_bulk_docs(log_date_prev)
         if argv_log_list:
             # 在命令行指定日志文件时: 根据日志中的ymdhm和mongodb中记录的last_date_time对比, 决定本次要处理的行数范围
             if last_date_time and y_m_d + hour + minute <= last_date_time:
@@ -381,7 +381,7 @@ def main(log_name):
 
         # 分钟粒度交替时: 从临时字典中汇总上一分钟的结果并将其入库
         if this_h_m != '' and this_h_m != hour + minute:
-            generate_bulk_docs()
+            generate_bulk_docs(y_m_d)
             if len(bulk_documents) == 100:  # 累积100个文档后执行一次批量插入
                 try:
                     insert_mongo(mongo_db, bulk_documents, n, y_m_d + this_h_m)
@@ -399,7 +399,7 @@ def main(log_name):
 
     # 最后可能会存在一部分已解析但未达到分钟交替的行, 需要额外逻辑进行入库
     if processed_num > 0:
-        generate_bulk_docs()
+        generate_bulk_docs(y_m_d)
     if bulk_documents and this_h_m:
         try:
             insert_mongo(mongo_db, bulk_documents, n, y_m_d + this_h_m)
