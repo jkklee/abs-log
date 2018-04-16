@@ -294,7 +294,7 @@ def main(log_name):
     site_name = log_name.split('.access')[0].replace('.', '')  # 即mongodb中的库名(将域名中的.去掉)
 
     invalid = 0  # 无效请求数
-    # main_stage: 存储处理过程中, 用于保存一分钟内的各项原始数据
+    # main_stage: 处理过程中, 用于保存一分钟内的各项原始数据
     main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
                              'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
                              'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
@@ -345,7 +345,7 @@ def main(log_name):
                 continue
             elif n > cur_num:
                 break
-        # 开始解析行
+        # 解析行
         line_res = process_line(line_str)
         if not line_res:
             invalid += 1
@@ -356,31 +356,26 @@ def main(log_name):
         else:
             # 对应一个日志文件中包含跨天日志内容的情况
             d_m_y = date.split('/')
-            y_m_d = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
             log_date_prev = log_date
             log_date_ori = date
-            log_date = y_m_d
-            last_num, last_date_time = get_prev_info(y_m_d)
-            if this_h_m:
-                #if bulk_documents:
-                try:
-                    insert_mongo(mongo_db, bulk_documents, n - 1, log_date_prev + this_h_m)
-                    bulk_documents = []
-                except Exception:
-                    return
-                reset_every_minute()
-                n = 1
-            else:
-                n = 1
-                continue
+            log_date = d_m_y[2][2:] + month_dict[d_m_y[1]] + d_m_y[0]
+            last_num, last_date_time = get_prev_info(log_date)
             generate_bulk_docs(log_date_prev)
+            # if bulk_documents:
+            try:
+                insert_mongo(mongo_db, bulk_documents, n - 1, log_date_prev + this_h_m)
+                bulk_documents = []
+            except Exception:
+                return
+            reset_every_minute()
+            n = 1
         if argv_log_list:
             # 在命令行指定日志文件时: 根据日志中的ymdhm和mongodb中记录的last_date_time对比, 决定本次要处理的行数范围
             if last_date_time and y_m_d + hour + minute <= last_date_time:
                 continue
 
         # 分钟粒度交替时: 从临时字典中汇总上一分钟的结果并将其入库
-        if this_h_m != '' and this_h_m != hour + minute:
+        if this_h_m != hour + minute and this_h_m != '':
             generate_bulk_docs(y_m_d)
             if len(bulk_documents) == 100:  # 累积100个文档后执行一次批量插入
                 try:
