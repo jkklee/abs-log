@@ -305,7 +305,7 @@ def main(log_name):
     def generate_bulk_docs(y_m_d):
         """生成每分钟的文档, 存放到bulk_documents中"""
         minute_main_doc = {
-            '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + '-' + server,
+            '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + choice(random_char) + '-' + server,
             'total_hits': processed_num,
             'invalid_hits': invalid,
             'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
