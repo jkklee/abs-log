@@ -93,7 +93,11 @@ def get_log_date(fp, log_name):
     n = 1
     while n <= 5:
         n += 1
-        line_res = process_line(fp.readline().rstrip('\n'))
+        line = fp.readline()
+        if line:
+            line_res = process_line(fp.readline().rstrip('\n'))
+        else:
+            raise Exception("{} empty file".format(log_name))
         if line_res:
             try:
                 date = line_res['time_local'].split(':')[0]
@@ -329,11 +333,8 @@ def main(log_name):
         cur_num = int(run('wc -l {}'.format(log_name), shell=True, stdout=PIPE, universal_newlines=True).stdout.split()[0])
         log_date_ori, log_date = get_log_date(fp, log_name)
         last_num, last_date_time = get_prev_info(log_date)  # 上一次处理到的行数和时间
-    except (FileNotFoundError, PermissionError, IsADirectoryError) as err:
-        logger.error(log_name, str(err))
-        return
     except Exception as err:
-        logger.error(str(err))
+        logger.error(err)
         return
 
     n = processed_num = 0
