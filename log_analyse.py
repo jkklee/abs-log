@@ -155,8 +155,7 @@ def del_old_data(date, h_m):
 
 
 def final_uri_dicts(main_stage, log_name, this_h_m):
-    """对main_stage里的原始数据进行整合生成每个uri_abs对应的字典, 插入到minute_main_doc['request']中, 生成最终存储到mongodb的文档
-    一个uri_abs在minute_main_doc中对应的格式如下"""
+    """对main_stage里的原始数据进行整合生成每个uri_abs对应的字典, 插入到minute_main_doc['request']中, 生成最终存储到mongodb的文档"""
     uris = []
     if len(main_stage) > URI_STORE_MAX_NUM:
         logger.debug("{} truncate uri_abs sorted by 'hits' from {} to {} at {}".format(log_name, len(main_stage), URI_STORE_MAX_NUM, this_h_m))
@@ -166,43 +165,53 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
             break
         uri_quartile_time = get_quartile(uri_v['time'])
         uri_quartile_bytes = get_quartile(uri_v['bytes'])
+        # minute_main_doc['request']列表中一个uri_abs对的应字典格式如下
         single_uri_dict = {'uri_abs': uri_k,
                            'hits': uri_v['hits'],
-                           'min_time': uri_quartile_time[0],
-                           'q1_time': round(uri_quartile_time[1], 3),
                            'q2_time': round(uri_quartile_time[2], 3),
                            'q3_time': round(uri_quartile_time[3], 3),
                            'max_time': uri_quartile_time[-1],
                            'time': int(sum(uri_v['time'])),
-                           'min_bytes': uri_quartile_bytes[0],
-                           'q1_bytes': int(uri_quartile_bytes[1]),
                            'q2_bytes': int(uri_quartile_bytes[2]),
                            'q3_bytes': int(uri_quartile_bytes[3]),
                            'max_bytes': uri_quartile_bytes[-1],
                            'bytes': sum(uri_v['bytes']),
                            'args': [],
-                           'ips': []}
+                           'ips': [],
+                           'errors': []}
         for arg_k, arg_v in uri_v['args'].items():
-            # 取点击量前MAX_ARG_NUM的args_abs
+            # 生成single_uri_dict['args']列表中的一个args_abs对应的字典single_arg_dict
             arg_quartile_time = get_quartile(arg_v['time'])
             arg_quartile_bytes = get_quartile(arg_v['bytes'])
             single_arg_dict = {'args_abs': arg_k,
                                'hits': arg_v['hits'],
-                               'min_time': arg_quartile_time[0],
-                               'q1_time': round(arg_quartile_time[1], 3),
                                'q2_time': round(arg_quartile_time[2], 3),
                                'q3_time': round(arg_quartile_time[3], 3),
                                'max_time': arg_quartile_time[-1],
                                'time': int(sum(arg_v['time'])),
-                               'min_bytes': arg_quartile_bytes[0],
-                               'q1_bytes': int(arg_quartile_bytes[1]),
                                'q2_bytes': int(arg_quartile_bytes[2]),
                                'q3_bytes': int(arg_quartile_bytes[3]),
                                'max_bytes': arg_quartile_bytes[-1],
                                'bytes': sum(arg_v['bytes']),
-                               'method': arg_v['method'],
-                               'error_code': main_stage[uri_k]['args'][arg_k]['error_code']}
+                               'method': arg_v['method']}
             single_uri_dict['args'].append(single_arg_dict)
+        for error_k, error_v in uri_v['errors'].items():
+            # 生成single_uri_dict['errors']列表中的一个error对应的字典single_error_dict
+            error_quartile_time = get_quartile(error_v['time'])
+            error_quartile_bytes = get_quartile(error_v['bytes'])
+            single_error_dict = {'error_code': error_k,
+                                 'hits': error_v['hits'],
+                                 'q2_time': round(error_quartile_time[2], 3),
+                                 'q3_time': round(error_quartile_time[3], 3),
+                                 'max_time': error_quartile_time[-1],
+                                 'time': int(sum(error_v['time'])),
+                                 'q2_bytes': int(error_quartile_bytes[2]),
+                                 'q3_bytes': int(error_quartile_bytes[3]),
+                                 'max_bytes': error_quartile_bytes[-1],
+                                 'bytes': sum(error_v['bytes']),
+                                 'method': error_v['method']
+                                 }
+            single_uri_dict['errors'].append(single_error_dict)
 
         def add_ip_statistics(ip_type):
             """将种类型ip的统计信息加入到single_uri_dict字典
@@ -241,19 +250,25 @@ def append_line_to_main_stage(line_res, main_stage):
         special_insert_list(main_stage[uri_abs]['bytes'], line_res['bytes_sent'])
         main_stage[uri_abs]['hits'] += 1
     else:
-        main_stage[uri_abs] = {'time': [line_res['request_time']], 'bytes': [line_res['bytes_sent']],
-                               'hits': 1, 'args': {}, 'user_ip_via_cdn': {}, 'last_cdn_ip': {}, 'user_ip_via_proxy': {}, 'remote_addr': {}}
+        main_stage[uri_abs] = {'time': [line_res['request_time']], 'bytes': [line_res['bytes_sent']], 'hits': 1, 'args': {},
+                               'errors': {}, 'user_ip_via_cdn': {}, 'last_cdn_ip': {}, 'user_ip_via_proxy': {}, 'remote_addr': {}}
     # 将args数据汇总到临时字典
     if args_abs in main_stage[uri_abs]['args']:
         main_stage[uri_abs]['args'][args_abs]['time'].append(line_res['request_time'])
         main_stage[uri_abs]['args'][args_abs]['bytes'].append(line_res['bytes_sent'])
         main_stage[uri_abs]['args'][args_abs]['hits'] += 1
-        if response_code >= '400':  # http错误码
-            special_update_dict(main_stage[uri_abs]['args'][args_abs]['error_code'], line_res['response_code'], 1)
     else:
         main_stage[uri_abs]['args'][args_abs] = {'time': [line_res['request_time']], 'bytes': [line_res['bytes_sent']],
-                                                 'hits': 1, 'method': line_res['request_method'],
-                                                 'error_code': {response_code: 1} if response_code >= '400' else {}}
+                                                 'hits': 1, 'method': line_res['request_method']}
+    # 将error信息汇总到临时字典
+    if response_code >= '400':
+        if response_code in main_stage[uri_abs]['errors']:
+            main_stage[uri_abs][response_code]['time'].append(line_res['request_time'])
+            main_stage[uri_abs][response_code]['bytes'].append(line_res['bytes_sent'])
+            main_stage[uri_abs][response_code]['hits'] += 1
+        else:
+            main_stage[uri_abs][response_code] = {'time': [line_res['request_time']], 'bytes': [line_res['bytes_sent']],
+                                                  'hits': 1, 'method': line_res['request_method']}
     # 将ip信息汇总到临时字典
     if user_ip != '-' and user_ip != last_cdn_ip:
         # come from cdn
