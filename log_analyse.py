@@ -163,6 +163,10 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
         # 取点击量前URI_STORE_MAX_NUM的uri_abs
         if uri_v['hits'] < URI_STORE_MIN_HITS:
             break
+        # 先由main_stage[uri_abs][args_abs]字典中计算出main_stage[uri_abs]字典
+        for args_abs_value in main_stage[uri_k]['args'].values():
+            main_stage[uri_k]['time'].extend(args_abs_value['time'])
+            main_stage[uri_k]['bytes'].extend(args_abs_value['bytes'])
         uri_quartile_time = get_quartile(uri_v['time'])
         uri_quartile_bytes = get_quartile(uri_v['bytes'])
         # minute_main_doc['request']列表中一个uri_abs对的应字典格式如下
@@ -244,15 +248,13 @@ def append_line_to_main_stage(line_res, main_stage):
     last_cdn_ip = line_res['last_cdn_ip']
     remote_addr = line_res['remote_addr']
     response_code = line_res['response_code']
-    # 将该行数据汇总至临时字典
+    # 将uri_abs数据汇总至临时字典(考虑性能,放到final_uri_dicts()中由args_abs数据计算而来)
     if uri_abs in main_stage:
-        special_insert_list(main_stage[uri_abs]['time'], line_res['request_time'])
-        special_insert_list(main_stage[uri_abs]['bytes'], line_res['bytes_sent'])
         main_stage[uri_abs]['hits'] += 1
     else:
-        main_stage[uri_abs] = {'time': [line_res['request_time']], 'bytes': [line_res['bytes_sent']], 'hits': 1, 'args': {},
-                               'errors': {}, 'user_ip_via_cdn': {}, 'last_cdn_ip': {}, 'user_ip_via_proxy': {}, 'remote_addr': {}}
-    # 将args数据汇总到临时字典
+        main_stage[uri_abs] = {'time': [], 'bytes': [], 'hits': 1, 'args': {}, 'errors': {}, 'user_ip_via_cdn': {},
+                               'last_cdn_ip': {}, 'user_ip_via_proxy': {}, 'remote_addr': {}}
+    # 将args_abs数据汇总到临时字典
     if args_abs in main_stage[uri_abs]['args']:
         main_stage[uri_abs]['args'][args_abs]['time'].append(line_res['request_time'])
         main_stage[uri_abs]['args'][args_abs]['bytes'].append(line_res['bytes_sent'])
