@@ -77,7 +77,7 @@ def process_line(line_str):
     request_further = request_uri_pattern_obj.search(request)
     if not request_further:
         logger.warning('$request abnormal: {}'.format(line_str))
-        return {'uri_abs': 'parse_error', 'args_abs': 'parse_error', 'time_local': time_local, 'response_code': response_code,
+        return {'uri_abs': 'parse_error', 'args_abs': 'parse_error', 'time_local': time_local, 'response_code': int(response_code),
                 'bytes_sent': int(bytes_sent), 'request_time': float(request_time), 'remote_addr': remote_addr,
                 'user_ip': user_ip, 'last_cdn_ip': last_cdn_ip, 'request_method': 'parse_error'}
     request_method = request_further.group('request_method')
@@ -85,7 +85,7 @@ def process_line(line_str):
     # 对uri和args进行抽象
     uri_abs, args_abs = text_abstract(request_uri, site_name)
 
-    return {'uri_abs': uri_abs, 'args_abs': args_abs, 'time_local': time_local, 'response_code': response_code,
+    return {'uri_abs': uri_abs, 'args_abs': args_abs, 'time_local': time_local, 'response_code': int(response_code),
             'bytes_sent': int(bytes_sent), 'request_time': float(request_time), 'remote_addr': remote_addr,
             'user_ip': user_ip, 'last_cdn_ip': last_cdn_ip, 'request_method': request_method}
 
@@ -215,8 +215,7 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
                                  'q3_bytes': int(error_quartile_bytes[3]),
                                  'max_bytes': error_quartile_bytes[-1],
                                  'bytes': sum(error_v['bytes']),
-                                 'method': error_v['method']
-                                 }
+                                 'method': error_v['method']}
             single_uri_dict['errors'].append(single_error_dict)
 
         def add_ip_statistics(ip_type):
@@ -267,14 +266,14 @@ def append_line_to_main_stage(line_res, main_stage):
         main_stage[uri_abs]['args'][args_abs] = {'time': [request_time], 'bytes': [bytes_sent],
                                                  'hits': 1, 'method': line_res['request_method']}
     # 将error信息汇总到临时字典
-    if response_code >= '400':
+    if response_code >= 400:
         if response_code in main_stage[uri_abs]['errors']:
-            main_stage[uri_abs][response_code]['time'].append(request_time)
-            main_stage[uri_abs][response_code]['bytes'].append(bytes_sent)
-            main_stage[uri_abs][response_code]['hits'] += 1
+            main_stage[uri_abs]['errors'][response_code]['time'].append(request_time)
+            main_stage[uri_abs]['errors'][response_code]['bytes'].append(bytes_sent)
+            main_stage[uri_abs]['errors'][response_code]['hits'] += 1
         else:
-            main_stage[uri_abs][response_code] = {'time': [request_time], 'bytes': [bytes_sent],
-                                                  'hits': 1, 'method': line_res['request_method']}
+            main_stage[uri_abs]['errors'][response_code] = {'time': [request_time], 'bytes': [bytes_sent],
+                                                            'hits': 1, 'method': line_res['request_method']}
     # 将ip信息汇总到临时字典
     if user_ip != '-' and user_ip != last_cdn_ip:
         # come from cdn
