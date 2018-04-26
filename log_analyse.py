@@ -50,17 +50,6 @@ def process_line(line_str):
     remote_addr = processed.group('remote_addr')
     time_local = processed.group('time_local')
 
-    # 处理uri和args
-    request = processed.group('request')
-    request_further = request_uri_pattern_obj.search(request)
-    if not request_further:
-        logger.warning('$request abnormal: {}'.format(line_str))
-        return
-    request_method = request_further.group('request_method')
-    request_uri = request_further.group('request_uri')
-    # 对uri和args进行抽象
-    uri_abs, args_abs = text_abstract(request_uri, site_name)
-
     # 状态码, 字节数, 响应时间
     response_code = processed.group('status')
     bytes_sent = processed.group('body_bytes_sent')
@@ -83,9 +72,22 @@ def process_line(line_str):
         user_ip = None
         last_cdn_ip = None
 
+    # 处理uri和args
+    request = processed.group('request')
+    request_further = request_uri_pattern_obj.search(request)
+    if not request_further:
+        logger.warning('$request abnormal: {}'.format(line_str))
+        return {'uri_abs': 'parse_error', 'args_abs': 'parse_error', 'time_local': time_local, 'response_code': response_code,
+                'bytes_sent': int(bytes_sent), 'request_time': float(request_time), 'remote_addr': remote_addr,
+                'user_ip': user_ip, 'last_cdn_ip': last_cdn_ip, 'request_method': 'parse_error'}
+    request_method = request_further.group('request_method')
+    request_uri = request_further.group('request_uri')
+    # 对uri和args进行抽象
+    uri_abs, args_abs = text_abstract(request_uri, site_name)
+
     return {'uri_abs': uri_abs, 'args_abs': args_abs, 'time_local': time_local, 'response_code': response_code,
             'bytes_sent': int(bytes_sent), 'request_time': float(request_time), 'remote_addr': remote_addr,
-            'user_ip': user_ip, 'last_cdn_ip': last_cdn_ip, 'request_method': request_method, 'request_uri': request_uri}
+            'user_ip': user_ip, 'last_cdn_ip': last_cdn_ip, 'request_method': request_method}
 
 
 def get_log_date(fp, log_name):
@@ -242,6 +244,8 @@ def final_uri_dicts(main_stage, log_name, this_h_m):
 
 def append_line_to_main_stage(line_res, main_stage):
     """将每行的分析结果(line_res)追加进(main_stage)字典"""
+    request_time = line_res['request_time']
+    bytes_sent = line_res['bytes_sent']
     uri_abs = line_res['uri_abs']
     args_abs = line_res['args_abs']
     user_ip = line_res['user_ip']
@@ -256,45 +260,45 @@ def append_line_to_main_stage(line_res, main_stage):
                                'last_cdn_ip': {}, 'user_ip_via_proxy': {}, 'remote_addr': {}}
     # 将args_abs数据汇总到临时字典
     if args_abs in main_stage[uri_abs]['args']:
-        main_stage[uri_abs]['args'][args_abs]['time'].append(line_res['request_time'])
-        main_stage[uri_abs]['args'][args_abs]['bytes'].append(line_res['bytes_sent'])
+        main_stage[uri_abs]['args'][args_abs]['time'].append(request_time)
+        main_stage[uri_abs]['args'][args_abs]['bytes'].append(bytes_sent)
         main_stage[uri_abs]['args'][args_abs]['hits'] += 1
     else:
-        main_stage[uri_abs]['args'][args_abs] = {'time': [line_res['request_time']], 'bytes': [line_res['bytes_sent']],
+        main_stage[uri_abs]['args'][args_abs] = {'time': [request_time], 'bytes': [bytes_sent],
                                                  'hits': 1, 'method': line_res['request_method']}
     # 将error信息汇总到临时字典
     if response_code >= '400':
         if response_code in main_stage[uri_abs]['errors']:
-            main_stage[uri_abs][response_code]['time'].append(line_res['request_time'])
-            main_stage[uri_abs][response_code]['bytes'].append(line_res['bytes_sent'])
+            main_stage[uri_abs][response_code]['time'].append(request_time)
+            main_stage[uri_abs][response_code]['bytes'].append(bytes_sent)
             main_stage[uri_abs][response_code]['hits'] += 1
         else:
-            main_stage[uri_abs][response_code] = {'time': [line_res['request_time']], 'bytes': [line_res['bytes_sent']],
+            main_stage[uri_abs][response_code] = {'time': [request_time], 'bytes': [bytes_sent],
                                                   'hits': 1, 'method': line_res['request_method']}
     # 将ip信息汇总到临时字典
     if user_ip != '-' and user_ip != last_cdn_ip:
         # come from cdn
         main_stage['source']['from_cdn']['hits'] += 1
-        main_stage['source']['from_cdn']['bytes'] += line_res['bytes_sent']
-        main_stage['source']['from_cdn']['time'] += line_res['request_time']
-        special_update_dict(main_stage[uri_abs]['user_ip_via_cdn'], user_ip, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
-                            sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
-        special_update_dict(main_stage[uri_abs]['last_cdn_ip'], last_cdn_ip, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
-                            sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
+        main_stage['source']['from_cdn']['bytes'] += bytes_sent
+        main_stage['source']['from_cdn']['time'] += request_time
+        special_update_dict(main_stage[uri_abs]['user_ip_via_cdn'], user_ip, sub_type={},
+                            sub_keys=['hits', 'time', 'bytes'], sub_values=[1, request_time, bytes_sent])
+        special_update_dict(main_stage[uri_abs]['last_cdn_ip'], last_cdn_ip, sub_type={},
+                            sub_keys=['hits', 'time', 'bytes'], sub_values=[1, request_time, bytes_sent])
     elif user_ip != '-' and user_ip == last_cdn_ip:
         # come from reverse_proxy
         main_stage['source']['from_reverse_proxy']['hits'] += 1
-        main_stage['source']['from_reverse_proxy']['bytes'] += line_res['bytes_sent']
-        main_stage['source']['from_reverse_proxy']['time'] += line_res['request_time']
-        special_update_dict(main_stage[uri_abs]['user_ip_via_proxy'], user_ip, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
-                            sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
+        main_stage['source']['from_reverse_proxy']['bytes'] += bytes_sent
+        main_stage['source']['from_reverse_proxy']['time'] += request_time
+        special_update_dict(main_stage[uri_abs]['user_ip_via_proxy'], user_ip, sub_type={},
+                            sub_keys=['hits', 'time', 'bytes'], sub_values=[1, request_time, bytes_sent])
     elif user_ip == '-' and user_ip == last_cdn_ip:
         # come from user directly
         main_stage['source']['from_client_directly']['hits'] += 1
-        main_stage['source']['from_client_directly']['bytes'] += line_res['bytes_sent']
-        main_stage['source']['from_client_directly']['time'] += line_res['request_time']
-        special_update_dict(main_stage[uri_abs]['remote_addr'], remote_addr, sub_type={}, sub_keys=['hits', 'time', 'bytes'],
-                            sub_values=[1, line_res['request_time'], line_res['bytes_sent']])
+        main_stage['source']['from_client_directly']['bytes'] += bytes_sent
+        main_stage['source']['from_client_directly']['time'] += request_time
+        special_update_dict(main_stage[uri_abs]['remote_addr'], remote_addr, sub_type={},
+                            sub_keys=['hits', 'time', 'bytes'], sub_values=[1, request_time, bytes_sent])
 
 
 def main(log_name):
