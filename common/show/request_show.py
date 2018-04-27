@@ -33,7 +33,7 @@ def base_summary(what, limit, mongo_col, match, total_dict):
 
     # 打印表头
     if what == 'hits':
-        print('{0}\nTotal_{1}:{2} invalid_hits:{3}\n{0}'.format('=' * 20, what, total_dict['total_hits'], total_dict['invalid_hits']))
+        print('{0}\nTotal_{1}:{2}  Invalid_hits:{3}  Error_hits:{4}\n{0}'.format('=' * 20, what, total_dict['total_hits'], total_dict['invalid_hits'], total_dict['error_hits']))
         print('{}  {}  {}  {}  {}'.format('hits'.rjust(10), 'percent'.rjust(7), 'time_distribution(s)'.center(30), 'bytes_distribution(B)'.center(36), 'uri_abs'))
     elif what == 'bytes':
         print('{0}\nTotal_{1}:{2}\n{0}'.format('='*20, what, get_human_size(total_dict['total_bytes'])))
@@ -119,7 +119,7 @@ def distribution(mongo_col, arguments):
         print('=' * 20)
 
     total_dict = total_info(mongo_col, match, project=total_project, uri_abs=uri_abs, args_abs=args_abs)
-    print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
+    print('Total_hits:{}  Total_bytes:{}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
     print('{}  {}  {}  {}  {}  {}  {}'.format((groupby if groupby else 'hour').rjust(10),
                                               'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(8),
                                               'time_distribution(s)'.center(30), 'bytes_distribution(B)'.center(36)))
@@ -176,7 +176,7 @@ def detail(mongo_col, arguments):
 
     # 打印表头
     print('{}\nuri_abs: {}'.format('=' * 20, uri_abs))
-    print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
+    print('Total_hits:{}  Total_bytes:{}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
     print('{}  {}  {}  {}  {}  {}  {}  args_abs'.format(
           'hits'.rjust(8), 'hits(%)'.rjust(7), 'bytes'.rjust(9), 'bytes(%)'.rjust(8), 'time(%)'.rjust(7),
           'time_distribution(s)'.center(30), 'bytes_distribution(B)'.center(36)))
