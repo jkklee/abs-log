@@ -34,29 +34,29 @@ def base_summary(ip_type, limit, mongo_col, match, total_dict):
     # 打印表头
     if ip_type == 'last_cdn_ip':
         # user_ip_via_cdn和last_cdn_ip均属于From_cdn,调用该函数时要保证先调用last_cdn_ip才能保证From_cdn表头正确输出
-        print('{}\n{}  {}  {}  {}  {}  {}'.format('=' * 20, 'From_cdn/Proxy'.ljust(20), 'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(7), 'time(%)'.rjust(7)))
+        print('{}\n{}  {}  {}  {}  {}  {}'.format('=' * 20, 'From_cdn/Proxy'.ljust(20), 'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(8), 'time(%)'.rjust(7)))
         this_total = mongo_col.aggregate(pipeline_source_func('from_cdn')).next()
     elif ip_type == 'user_ip_via_proxy':
-        print('{}\n{}  {}  {}  {}  {}  {}'.format('=' * 20, 'From_reverse_proxy'.ljust(20), 'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(7), 'time(%)'.rjust(7)))
+        print('{}\n{}  {}  {}  {}  {}  {}'.format('=' * 20, 'From_reverse_proxy'.ljust(20), 'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(8), 'time(%)'.rjust(7)))
         this_total = mongo_col.aggregate(pipeline_source_func('from_reverse_proxy')).next()
     elif ip_type == 'remote_addr':
-        print('{}\n{}  {}  {}  {}  {}  {}'.format('=' * 20, 'From_client_directly'.ljust(20), 'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(7), 'time(%)'.rjust(7)))
+        print('{}\n{}  {}  {}  {}  {}  {}'.format('=' * 20, 'From_client_directly'.ljust(20), 'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(8), 'time(%)'.rjust(7)))
         this_total = mongo_col.aggregate(pipeline_source_func('from_client_directly')).next()
     if ip_type != 'user_ip_via_cdn':
-        print('{}  {}  {}  {}  {}  {}'.format('=' * 20, str(this_total['hits']).rjust(10),
-                                          format(this_total['hits'] / total_dict['total_hits'] * 100, '.2f').rjust(7),
+        print('{}  {}  {}%  {}  {}%  {}%'.format('=' * 20, str(this_total['hits']).rjust(10),
+                                          format(this_total['hits'] / total_dict['total_hits'] * 100, '.2f').rjust(6),
                                           get_human_size(this_total['bytes']).rjust(10),
                                           format(this_total['bytes'] / total_dict['total_bytes'] * 100, '.2f').rjust(7),
-                                          format(this_total['time'] / total_dict['total_time'] * 100, '.2f').rjust(7)))
+                                          format(this_total['time'] / total_dict['total_time'] * 100, '.2f').rjust(6)))
     print(ip_type.capitalize().rjust(20))
     # 打印结果
     for one_doc in mongo_result:
-        print('{}  {}  {}  {}  {}  {}'.format(
+        print('{}  {}  {}%  {}  {}%  {}%'.format(
             one_doc['_id'].rjust(20), str(one_doc['hits']).rjust(10),
-            format(one_doc['hits'] / total_dict['total_hits'] * 100, '.2f').rjust(7),
+            format(one_doc['hits'] / total_dict['total_hits'] * 100, '.2f').rjust(6),
             get_human_size(one_doc['bytes']).rjust(10),
             format(one_doc['bytes'] / total_dict['total_bytes'] * 100, '.2f').rjust(7),
-            format(one_doc['time'] / total_dict['total_time'] * 100, '.2f').rjust(7)))
+            format(one_doc['time'] / total_dict['total_time'] * 100, '.2f').rjust(6)))
 
 
 def distribution(mongo_col, arguments):
@@ -85,7 +85,7 @@ def distribution(mongo_col, arguments):
 
     # 打印表头
     print('{0}\nIP: {1}'.format('=' * 20, ip))
-    print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
+    print('Total_hits:{}  Total_bytes:{}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
     print('{}  {}  {}  {}  {}'.format(groupby.rjust(10), 'hits'.rjust(10), 'hits(%)'.rjust(7), 'bytes'.rjust(10), 'bytes(%)'.rjust(8)))
     # 打印结果
     for one_doc in mongo_result:
@@ -122,7 +122,7 @@ def detail(mongo_col, arguments):
 
     # 打印表头
     print('{}\nIP: {}'.format('=' * 20, ip))
-    print('Total_hits: {}    Total_bytes: {}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
+    print('Total_hits:{}  Total_bytes:{}\n{}'.format(total_dict['total_hits'], get_human_size(total_dict['total_bytes']), '=' * 20))
     print('{}  {}  {}  {}  {}  uri_abs'.format(
           'hits'.rjust(8), 'hits(%)'.rjust(7), 'bytes'.rjust(9), 'bytes(%)'.rjust(8), 'time(%)'.rjust(7)))
     # 打印结果
