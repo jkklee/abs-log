@@ -317,7 +317,8 @@ def main(log_name):
     global site_name
     site_name = log_name.split('.access')[0].replace('.', '')  # 即mongodb中的库名(将域名中的.去掉)
 
-    invalid = 0  # 无效请求数
+    invalid_hits = 0  # 无效请求数
+    error_hits = 0  # 返回码>400的请求数
     # main_stage: 处理过程中, 用于保存一分钟内的各项原始数据
     main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
                              'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
@@ -331,7 +332,8 @@ def main(log_name):
         minute_main_doc = {
             '_id': y_m_d + this_h_m + '-' + choice(random_char) + choice(random_char) + choice(random_char) + '-' + server,
             'total_hits': processed_num,
-            'invalid_hits': invalid,
+            'invalid_hits': invalid_hits,
+            'error_hits': error_hits,
             'total_bytes': main_stage['source']['from_cdn']['bytes'] + main_stage['source']['from_reverse_proxy']['bytes'] + main_stage['source']['from_client_directly']['bytes'],
             'total_time': round(main_stage['source']['from_cdn']['time'] + main_stage['source']['from_reverse_proxy']['time'] + main_stage['source']['from_client_directly']['time'], 3),
             'requests': [],
@@ -340,9 +342,8 @@ def main(log_name):
         bulk_documents.append(minute_main_doc)
 
     def reset_every_minute():
-        nonlocal processed_num, main_stage, invalid
-        processed_num = 0
-        invalid = 0
+        nonlocal processed_num, main_stage, invalid_hits, error_hits
+        processed_num = invalid_hits = error_hits = 0
         main_stage = {'source': {'from_cdn': {'hits': 0, 'bytes': 0, 'time': 0},
                                  'from_reverse_proxy': {'hits': 0, 'bytes': 0, 'time': 0},
                                  'from_client_directly': {'hits': 0, 'bytes': 0, 'time': 0}}}
@@ -371,6 +372,8 @@ def main(log_name):
         if not line_res:
             invalid += 1
             continue
+        if line_res['response_code'] >= 400:
+            error_hits += 1
         date, hour, minute = line_res['time_local'].split(':')[:3]
         if date == log_date_ori:
             y_m_d = log_date
