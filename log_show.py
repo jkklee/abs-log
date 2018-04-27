@@ -27,7 +27,7 @@ Options:
 
 from docopt import docopt
 from common.common import mongo_client, match_condition, total_info
-from common.show import request_show, ip_show, error_code_show
+from common.show import request_show, ip_show, error_show
 
 arguments = docopt(__doc__)
 # print(arguments)  #debug
@@ -48,14 +48,14 @@ if arguments['distribution'] and arguments['request']:
 elif arguments['distribution'] and arguments['ip']:
     ip_show.distribution(mongo_col, arguments)
 elif arguments['distribution'] and arguments['error']:
-    print('To be implement...')
+    error_show.distribution(mongo_col, arguments)
 
 elif arguments['detail'] and arguments['request']:
     request_show.detail(mongo_col, arguments)
 elif arguments['detail'] and arguments['ip']:
     ip_show.detail(mongo_col, arguments)
 elif arguments['detail'] and arguments['error']:
-    print('To be implement...')
+    error_show.detail(mongo_col, arguments)
 
 elif arguments['ip']:
     total_dict = total_info(mongo_col, base_match)
@@ -64,7 +64,8 @@ elif arguments['ip']:
     ip_show.base_summary('user_ip_via_proxy', int(arguments['--limit']), mongo_col, base_match, total_dict)
     ip_show.base_summary('remote_addr', int(arguments['--limit']), mongo_col, base_match, total_dict)
 elif arguments['error']:
-    print('To be implement...')
+    total_dict = total_info(mongo_col, base_match)
+    error_show.base_summary(int(arguments['--limit']), mongo_col, base_match, total_dict)
 
 else:
     total_dict = total_info(mongo_col, base_match)
