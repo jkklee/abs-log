@@ -159,7 +159,7 @@ def get_human_size(n):
     return format(n, '.2f') + ' ' + units[i]
 
 
-def match_condition(server, start, end, uri_abs=None, args_abs=None, ip=None):
+def match_condition(server, start, end, uri_abs=None, args_abs=None, ip=None, error_code=None):
     """根据指定条件返回mongodb中aggregate操作pipeline中的$match
     用$and操作符，方便对$match条件进行增减
     server: 显示来自该server的日志
@@ -167,14 +167,15 @@ def match_condition(server, start, end, uri_abs=None, args_abs=None, ip=None):
     end: 结束时间
     uri_abs: 经过抽象的uri
     args_abs: 经过抽象的args
-    ip: 特定的ip地址"""
+    ip: 指定的ip地址
+    error_code: 指定的错误码"""
     if start and end:
         basic_match = {'$match': {'$and': [{'_id': {'$gte': start}}, {'_id': {'$lt': end}}]}}
     elif start and not end:
         basic_match = {'$match': {'$and': [{'_id': {'$gte': start}}]}}
     elif end and not start:
         basic_match = {'$match': {'$and': [{'_id': {'$lt': end}}]}}
-    else:     # 默认取今天的数据做汇总; 只有end时, 忽略end
+    else:  # 默认取今天的数据做汇总
         basic_match = {'$match': {'$and': [{'_id': {'$gte': today}}]}}
     if server:
         basic_match['$match']['$and'].append({'_id': {'$regex': server + '$'}})
@@ -185,10 +186,12 @@ def match_condition(server, start, end, uri_abs=None, args_abs=None, ip=None):
         special_match['$match']['$and'].append({'requests.args.args_abs': args_abs})
     if ip:
         special_match['$match']['$and'] = [{'requests.ips.ip': ip}]
+    if error_code:
+        special_match['$match']['$and'] = [{'requests.errors.error_code': error_code}]
     return {'basic_match': basic_match, 'special_match': special_match}
 
 
-def total_info(mongo_col, match, project={'$match': {}}, uri_abs=None, args_abs=None, ip=None):
+def total_info(mongo_col, match, project={'$match': {}}, uri_abs=None, args_abs=None, ip=None, error_code=None):
     """返回指定条件内的hits/bytes/time总量
     mongo_col: 本次操作对应的集合名称
     match: pipeline中的match条件(match_condition由函数返回，包含两部分$match)
@@ -196,7 +199,7 @@ def total_info(mongo_col, match, project={'$match': {}}, uri_abs=None, args_abs=
     """
     pipeline = [match['basic_match'], project,
                 {'$group': {'_id': 'null', 'total_hits': {'$sum': '$total_hits'}, 'total_bytes': {'$sum': '$total_bytes'},
-                            'total_time': {'$sum': '$total_time'}, 'invalid_hits': {'$sum': '$invalid_hits'}}}]
+                            'total_time': {'$sum': '$total_time'}, 'invalid_hits': {'$sum': '$invalid_hits'}, 'error_hits': {'$sum': '$error_hits'}}}]
     if uri_abs and args_abs:
         pipeline.insert(2, {'$unwind': '$requests'})
         pipeline.insert(3, {'$unwind': '$requests.args'})
@@ -217,6 +220,13 @@ def total_info(mongo_col, match, project={'$match': {}}, uri_abs=None, args_abs=
         pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.ips.hits'
         pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.ips.bytes'
         pipeline[-1]['$group']['total_time']['$sum'] = '$requests.ips.time'
+    elif error_code:
+        pipeline.insert(2, {'$unwind': '$requests'})
+        pipeline.insert(3, {'$unwind': '$requests.errors'})
+        pipeline.insert(4, match['special_match'])
+        pipeline[-1]['$group']['total_hits']['$sum'] = '$requests.errors.hits'
+        pipeline[-1]['$group']['total_bytes']['$sum'] = '$requests.errors.bytes'
+        pipeline[-1]['$group']['total_time']['$sum'] = '$requests.errors.time'
     try:
         # 符合条件的总hits/bytes/time/invalid_hits
         return mongo_col.aggregate(pipeline).next()
