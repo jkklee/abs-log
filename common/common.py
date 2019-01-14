@@ -109,16 +109,13 @@ def get_quartile(data):
 
 def special_insert_list(arr, v):
     """list插入过程加入对最大值(index: -1)的维护"""
-    if len(arr) == 1:
-        if v >= arr[0]:
-            arr.append(v)
-        else:
-            arr.insert(0, v)
-    else:
+    if len(arr) > 0:
         if v >= arr[-1]:
             arr.append(v)
         else:
             arr.insert(-1, v)
+    else:
+        arr.append(v)
 
 
 def special_update_dict(dict_obj, key, standby_value=None, sub_type=None, sub_keys=None, sub_values=None):
