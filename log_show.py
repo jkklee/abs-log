@@ -24,8 +24,8 @@ Options:
 
   Notice: it's best to put 'request_uri', 'uri' and 'ip' in quotation marks.
 """
-
 from docopt import docopt
+
 from common.common import mongo_client, match_condition, total_info
 from common.show import request_show, ip_show, error_show
 
@@ -33,10 +33,13 @@ arguments = docopt(__doc__)
 # print(arguments)  #debug
 # 判断--group_by合理性
 if arguments['--group_by'] not in ('minute', 'ten_min', 'hour', 'day'):
-    print("  Warning: --group_by must be one of {'minute', 'ten_min', 'hour', 'day'}")
-    exit(10)
+    exit("Error: --group_by must be one of {'minute', 'ten_min', 'hour', 'day'}")
 
-mongo_db = mongo_client[arguments['<site_name>'].replace('.', '')]
+db_name = arguments['<site_name>'].replace('.', '_')
+if db_name not in mongo_client.list_database_names():
+    exit("Error: {} (auto convert to {}) is not in mongodb".format(arguments['<site_name>'], db_name))
+
+mongo_db = mongo_client[db_name]
 # mongodb集合
 mongo_col = mongo_db['main']
 # 最基本的过滤条件
