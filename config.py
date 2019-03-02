@@ -4,10 +4,12 @@
 LOG_TYPE = 'plaintext'
 
 # nginx配置文件中定义的日志格式
+# plaintext
 LOG_FORMAT = '$remote_addr - [$time_local] "$request" '\
              '$status $body_bytes_sent $request_time "$http_referer" '\
              '"$http_user_agent" - $http_x_forwarded_for'
 """
+# json
 LOG_FORMAT = '{"timestamp":"$time_iso8601",'\
                      '"remote_addr":"$remote_addr",'\
                      '"scheme":"$scheme",'\
@@ -39,12 +41,10 @@ MONGO_PORT = 27017
 # 存储设置
 # mongodb存储结构为每个站点对应一个库一个集合(main), 每分钟每server产生一个统计结果文档(即分析粒度最小达到分钟级)
 # 为了使mongodb数据集尽量小, 每分钟统计结果中, 取点击数前URI_STORE_MAX_NUM的uri进行入库,
-# 同时若uri_abs在该分钟内点击数小于URI_STORE_MIN_HITS, 则该uri_abs不予入库
 URI_STORE_MAX_NUM = 80
-URI_STORE_MIN_HITS = 5
-# ip统计, 每分钟统计结果中, 取点击数前IP_STORE_MAX_NUM的ip, 同时若ip在该分钟内点击数小于IP_STORE_MIN_HITS, 则该ip不予入库
+# ip统计, 每分钟统计结果中, 取点击数前IP_STORE_MAX_NUM的ip
 IP_STORE_MAX_NUM = 30
-IP_STORE_MIN_HITS = 3
+
 # mongodb中保存几天的数据
 LIMIT = 10
 # 批量插入: 累计多少分钟的处理结果执行一次入库(因为程序处理每分钟的原始日志生成一个该分钟的文档插入mongodb)
@@ -91,7 +91,4 @@ ABS_SPECIAL = {'api_access.log': {
 """
 ABS_SPECIAL = {}
 
-# 目前功能需要的字段(不是全部, 可用nginx规定的同义字段)
-# todo 构造一个数据结构便于检查是否包含必要的字段以及处理同义字段间不确定的命名
-# NEEDED_FIELD = ('$remote_addr', '$request_method', '$uri', '$args', '$reqeust', '$request_uri', '$request_time', '$status', '$body_bytes_sent', '$http_x_forwarded_for', '$time_local', '$time_iso8601')
 
