@@ -1,15 +1,19 @@
 # -*- coding:utf-8 -*-
-from config import log_format, mongo_host, mongo_port, abs_special
-from urllib.parse import unquote
 import time
-from datetime import datetime, timedelta
 import re
+import glob
+import json
 import pymongo
 from sys import exit
+from os import path
 from functools import wraps
+from urllib.parse import unquote
+from datetime import datetime, timedelta
 
-mongo_client = pymongo.MongoClient(mongo_host, mongo_port, connect=False)
-today = time.strftime('%y%m%d', time.localtime())  # 今天日期,取两位年份
+from config import LOG_FORMAT, LOG_TYPE, MONGO_HOST, MONGO_PORT, ABS_SPECIAL, LOG_PATH, EXCLUDE
+
+mongo_client = pymongo.MongoClient(MONGO_HOST, MONGO_PORT, connect=False)
+today = time.strftime('%Y%m%d', time.localtime())  # 今天日期
 
 
 def timer(func):
@@ -25,29 +29,74 @@ def timer(func):
 
 
 # -----log_analyse使用----- #
-# 利用非贪婪匹配和分组匹配
+# 检查config.py中提供的日志格式中的必要字段
+needed_fields = ('$remote_addr', [('$request_method', '$uri', '$args'), '$reqeust', ('$request_method', '$request_uri')],
+                 '$request_time', '$status', '$body_bytes_sent', ['$time_local', '$time_iso8601'])
+if LOG_TYPE == 'plaintext':
+    supplied_fields = LOG_FORMAT.replace('[', '').replace(']', '').replace('"', '').split()
+else:  # LOG_TYPE == 'json':
+    supplied_fields = dict([(v, k) for k, v in json.loads(LOG_FORMAT).items()]).keys()
+for field in needed_fields:
+    if isinstance(field, str):
+        if field not in supplied_fields:
+            exit("Error: please confirm '{}' is in your log_format".format(field))
+    if isinstance(field, list):
+        if all([isinstance(x, str) for x in field]):
+            if not any([x in supplied_fields for x in field]):
+                exit("Error: please confirm one of '{}' is in your log_format".format(field))
+        else:
+            field_iter = (x for x in field)
+            try:
+                while True:
+                    x = next(field_iter)
+                    if isinstance(x, str):
+                        if x in supplied_fields:
+                            break
+                    elif isinstance(x, tuple):
+                        if all([y in supplied_fields for y in x]):
+                            break
+            except StopIteration:
+                exit("Error: please confirm one of '{}' is in your log_format".format(field))
+
+
+# 利用非贪婪匹配和分组匹配(plaintext格式需要)
 ngx_style_log_field_pattern = {'$remote_addr': '(?P<remote_addr>.*?)',
                                '$time_local': '(?P<time_local>.*?)',
+                               '$time_iso8601': '(?P<time_local>.*?)',
                                '$request': '(?P<request>.*?)',
+                               '$request_method': '(?P<request_method>GET|POST|HEAD|DELETE|PUT|OPTIONS|CONNECT)',
                                '$status': '(?P<status>.*?)',
                                '$body_bytes_sent': '(?P<body_bytes_sent>.*?)',
                                '$request_time': '(?P<request_time>.*?)',
                                '$http_referer': '(?P<http_referer>.*?)',
                                '$http_user_agent': '(?P<http_user_agent>.*?)',
                                '$http_x_forwarded_for': '(?P<http_x_forwarded_for>.*)',
+                               '$scheme': '(?P<scheme>.*?)',
+                               '$request_uri': '(?P<request_uri>.*?)',
+                               '$uri': '(?P<uri>.*?)',
+                               '$document_uri': '(?P<uri>.*?)',
+                               '$args': '(?P<args>.*?)',
+                               '$query_string': '(?P<args>.*?)',
+                               '$server_protocol': '(?P<server_protocol>.*?)',
+                               '$server_name': '(?P<http_host>.*?)',
+                               '$host': '(?P<http_host>.*?)',
+                               '$http_host': '(?P<http_host>.*?)',
                                '$request_length': '(?P<request_length>.*?)',
                                '$remote_user': '(?P<remote_user>.*?)',
                                '$gzip_ratio': '(?P<gzip_ratio>.*?)',
-                               '$connection_requests': '(?P<connection_requests>.*?)'}
-# 通过log_format得到可以匹配整行日志的log_pattern
-for filed in log_format.replace('[', '').replace(']', '').replace('"', '').split():
+                               '$connection_requests': '(?P<connection_requests>.*?)'
+                               }
+# 通过LOG_FORMAT得到可以匹配整行日志的log_pattern
+for filed in supplied_fields:
     if filed in ngx_style_log_field_pattern:
-        log_format = log_format.replace(filed, ngx_style_log_field_pattern[filed], 1)
-log_pattern = log_format.replace('[', '\[').replace(']', '\]')
+        LOG_FORMAT = LOG_FORMAT.replace(filed, ngx_style_log_field_pattern[filed], 1)
+log_pattern = LOG_FORMAT.replace('[', '\\[').replace(']', '\\]')
 # $request的正则, 其实是由 "request_method request_uri server_protocol"三部分组成
-request_uri_pattern = r'^(?P<request_method>(GET|POST|HEAD|DELETE|PUT|OPTIONS)?) ' \
+request_uri_pattern = r'^(?P<request_method>GET|POST|HEAD|DELETE|PUT|OPTIONS|CONNECT) ' \
                       r'(?P<request_uri>.*?) ' \
                       r'(?P<server_protocol>.*)$'
+log_pattern_obj = re.compile(log_pattern)
+request_uri_pattern_obj = re.compile(request_uri_pattern)
 
 # 文档中_id字段中需要的随机字符串
 random_char = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -56,7 +105,28 @@ month_dict = {'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'May': '05', '
               'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'}
 
 
-def text_abstract(text, site=None):
+def todo_log():
+    """通过配置文件取得要处理的日志文件"""
+    all_find = glob.glob(LOG_PATH)
+    return [one for one in all_find if path.basename(one) not in EXCLUDE]
+
+
+def convert_time(t_value, t_type):
+    """将nginx中time_local或time_iso8601格式的时间转换为201902250101格式
+    返回元组 (date,hour,minute)"""
+    if t_type == 'time_local':
+        _time_local = t_value.split(':')
+        _d_m_y = _time_local[0].split('/')
+        date = _d_m_y[2] + month_dict[_d_m_y[1]] + _d_m_y[0]  # 将20/Feb/2019转为20190220格式
+        return date, _time_local[1], _time_local[2]
+    if t_type == 'time_iso8601':
+        _time_local = t_value.split('T')
+        _date = _time_local[0].split('-')
+        _time = _time_local[1].split(':')
+        return ''.join(_date), _time[0], _time[1]
+
+
+def text_abstract(request_uri_=None, uri_=None, args_=None, log_name_=None):
     """
     对uri和args进行抽象化,利于分类
     默认规则:
@@ -65,19 +135,23 @@ def text_abstract(text, site=None):
     text: 待处理的内容
     site: 站点名称
     """
-    uri_args = text.split('?', 1)
-    uri = unquote(uri_args[0])
-    args = '' if len(uri_args) == 1 else unquote(uri_args[1])
+    if request_uri_:
+        uri_args = request_uri_.split('?', 1)
+        uri = unquote(uri_args[0])
+        args = '' if len(uri_args) == 1 else unquote(uri_args[1])
+    else:
+        uri = unquote(uri_)
+        args = unquote(args_)
     # 特殊抽象规则
-    if site in abs_special:
-        for uri_pattern in abs_special[site]:
+    if log_name_ in ABS_SPECIAL:
+        for uri_pattern in ABS_SPECIAL[log_name_]:
             if re.search(uri_pattern, uri):
-                if 'uri_replace' in abs_special[site][uri_pattern]:
-                    uri = re.sub(uri_pattern, abs_special[site][uri_pattern]['uri_replace'], uri)
-                if 'arg_replace' in abs_special[site][uri_pattern]:
-                    for arg_pattern in abs_special[site][uri_pattern]['arg_replace']:
+                if 'uri_replace' in ABS_SPECIAL[log_name_][uri_pattern]:
+                    uri = re.sub(uri_pattern, ABS_SPECIAL[log_name_][uri_pattern]['uri_replace'], uri)
+                if 'arg_replace' in ABS_SPECIAL[log_name_][uri_pattern]:
+                    for arg_pattern in ABS_SPECIAL[log_name_][uri_pattern]['arg_replace']:
                         if re.search(arg_pattern, args):
-                            args = re.sub(arg_pattern, abs_special[site][uri_pattern]['arg_replace'][arg_pattern], args)
+                            args = re.sub(arg_pattern, ABS_SPECIAL[log_name_][uri_pattern]['arg_replace'][arg_pattern], args)
                         else:
                             args = re.sub('=[^&=]+', '=*', args)
                 return uri, args
@@ -137,12 +211,12 @@ def special_update_dict(dict_obj, key, standby_value=None, sub_type=None, sub_ke
 
 
 def get_delta_date(date, delta):
-    """对于给定的date(格式: 180315), 返回其往前推delta天的日期(相同格式)"""
-    year = int(date[0:2])+2000
-    month = int(date[2:4])
-    day = int(date[4:])
+    """对于给定的date(格式: 20180315), 返回其往前推delta天的日期(相同格式)"""
+    year = int(date[0:4])
+    month = int(date[4:6])
+    day = int(date[6:8])
     min_date = datetime(year, month, day) - timedelta(days=delta-1)
-    return min_date.strftime('%y%m%d')
+    return min_date.strftime('%Y%m%d')
 
 
 # -----log_show使用----- #
@@ -228,20 +302,19 @@ def total_info(mongo_col, match, project={'$match': {}}, uri_abs=None, args_abs=
         # 符合条件的总hits/bytes/time/invalid_hits
         return mongo_col.aggregate(pipeline).next()
     except StopIteration:
-        print('Warning: no record under the condition you specified')
-        exit(11)
+        exit('Warning: no record under the condition you specified')
 
 
 def group_by_func(arg):
     """根据指定的汇总粒度, 决定 aggregate 操作中 $group 条件的 _id 列"""
     if arg == 'minute':
-        group_id = {'$substrBytes': ['$_id', 0, 10]}
+        group_id = {'$substrBytes': ['$_id', 0, 12]}
     elif arg == 'ten_min':
-        group_id = {'$substrBytes': ['$_id', 0, 9]}
+        group_id = {'$substrBytes': ['$_id', 0, 11]}
     elif arg == 'day':
-        group_id = {'$substrBytes': ['$_id', 0, 6]}
-    else:  # 默认 arg == 'hour'
         group_id = {'$substrBytes': ['$_id', 0, 8]}
+    else:  # 默认 arg == 'hour'
+        group_id = {'$substrBytes': ['$_id', 0, 10]}
     return group_id
 
 
