@@ -1,4 +1,6 @@
 # web_log_analyse
+[中文](https://github.com/jkklee/web_log_analyse/blob/master/README_CN.md)
+
 This tool is not a generally said PV/UV log statistics solution, but provide fine grained(the minimum is every minute) trouble shooting and performance optimization in a specified time period, based on it's flexible and various summaries.
 
 ## Dependencies
@@ -205,7 +207,7 @@ The script is designed to be placed in the `crontab` on the web server, and get 
 */15 * * * * export LANG=zh_CN.UTF-8;python3 /home/ljk/log_analyse.py &> /tmp/log_analyse.log
 ```
 
-## Note
+**Note**  
 1. `uri_abs` and `args_abs` is the abstraction of the uri and args, default rule as follows:    
  **uri**：the request_uri is separated into several fields by "/" and ".", and abstracted as a "\*" if a field is made up entirely of numbers.  
  **args**：replace every value with a "*".
