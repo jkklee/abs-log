@@ -1,7 +1,7 @@
 
 **[中文](https://github.com/jkklee/web_log_analyse/blob/master/README_CN.md)**
 
-This tool is not a generally said PV/UV log statistics solution, but provide fine grained(the minimum is every minute) trouble shooting and performance optimization in a specified time period, based on it's flexible and various summaries.
+This is not a usual PV/UV log analyse tool, but another perspective of web log. It provide fine grained(the minimum is every minute) trouble shooting and performance optimization in a specified time period, based on it's flexible and various summaries.
 
 ## Dependencies
 - Python 3.4+
