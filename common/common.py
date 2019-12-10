@@ -31,7 +31,7 @@ def timer(func):
 # -----log_analyse使用----- #
 # 检查config.py中提供的日志格式中的必要字段
 needed_fields = ('$remote_addr', [('$request_method', '$uri', '$args'), '$request', ('$request_method', '$request_uri')],
-                 '$request_time', '$status', '$body_bytes_sent', ['$time_local', '$time_iso8601'])
+                 '$request_time', '$status', ['$body_bytes_sent', '$bytes_sent'], ['$time_local', '$time_iso8601'])
 if LOG_TYPE == 'plaintext':
     supplied_fields = LOG_FORMAT.replace('[', '').replace(']', '').replace('"', '').split()
 else:  # LOG_TYPE == 'json':
@@ -67,6 +67,7 @@ ngx_style_log_field_pattern = {'$remote_addr': '(?P<remote_addr>.*?)',
                                '$request_method': '(?P<request_method>GET|POST|HEAD|DELETE|PUT|OPTIONS|CONNECT)',
                                '$status': '(?P<status>.*?)',
                                '$body_bytes_sent': '(?P<body_bytes_sent>.*?)',
+                               '$bytes_sent': '(?P<body_bytes_sent>.*?)',
                                '$request_time': '(?P<request_time>.*?)',
                                '$http_referer': '(?P<http_referer>.*?)',
                                '$http_user_agent': '(?P<http_user_agent>.*?)',
