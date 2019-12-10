@@ -85,7 +85,10 @@ ngx_style_log_field_pattern = {'$remote_addr': '(?P<remote_addr>.*?)',
                                '$request_length': '(?P<request_length>.*?)',
                                '$remote_user': '(?P<remote_user>.*?)',
                                '$gzip_ratio': '(?P<gzip_ratio>.*?)',
-                               '$connection_requests': '(?P<connection_requests>.*?)'
+                               '$connection_requests': '(?P<connection_requests>.*?)',
+                               '$connection': '(?P<connection>.*?)',
+                               '$upstream_addr': '(?P<upstream_addr>.*?)',
+                               '$upstream_status': '(?P<upstream_status>.*?)'
                                }
 # 通过LOG_FORMAT得到可以匹配整行日志的log_pattern
 for filed in supplied_fields:
