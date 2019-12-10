@@ -30,7 +30,7 @@ def timer(func):
 
 # -----log_analyse使用----- #
 # 检查config.py中提供的日志格式中的必要字段
-needed_fields = ('$remote_addr', [('$request_method', '$uri', '$args'), '$reqeust', ('$request_method', '$request_uri')],
+needed_fields = ('$remote_addr', [('$request_method', '$uri', '$args'), '$request', ('$request_method', '$request_uri')],
                  '$request_time', '$status', '$body_bytes_sent', ['$time_local', '$time_iso8601'])
 if LOG_TYPE == 'plaintext':
     supplied_fields = LOG_FORMAT.replace('[', '').replace(']', '').replace('"', '').split()
